@@ -3,6 +3,7 @@ import { AskError, type ErrorKind } from '../api';
 interface Props {
   error: unknown;
   onRetry: () => void;
+  onNewQuestion: () => void;
 }
 
 interface ErrorCopy {
@@ -48,7 +49,6 @@ const COPY: Record<ErrorKind, ErrorCopy> = {
 function copyFor(error: unknown): ErrorCopy {
   if (error instanceof AskError) {
     const base = COPY[error.kind];
-    // Preferimos el mensaje del servidor cuando lo hay (más específico).
     return error.kind === 'server' && error.message
       ? { ...base, hint: error.message }
       : base;
@@ -61,23 +61,27 @@ function copyFor(error: unknown): ErrorCopy {
   };
 }
 
-export default function ErrorCard({ error, onRetry }: Props) {
+export default function ErrorCard({ error, onRetry, onNewQuestion }: Props) {
   const { icon, title, hint, retriable } = copyFor(error);
 
   return (
-    <div className="status-card status-card--error" role="alert">
-      <span className="status-card__icon" aria-hidden="true">
-        {icon}
-      </span>
+    <div className="status-card status-card--error result-enter" role="alert">
+      <span className="status-card__icon" aria-hidden="true">{icon}</span>
       <div className="status-card__body">
+        <span className="status-card__eyebrow">No pudimos responder</span>
         <strong>{title}</strong>
         <p>{hint}</p>
+        <div className="status-card__actions">
+          {retriable && (
+            <button type="button" className="primary-button primary-button--compact" onClick={onRetry}>
+              Reintentar
+            </button>
+          )}
+          <button type="button" className="ghost-button" onClick={onNewQuestion}>
+            Nueva pregunta
+          </button>
+        </div>
       </div>
-      {retriable && (
-        <button type="button" className="secondary-button" onClick={onRetry}>
-          Reintentar
-        </button>
-      )}
     </div>
   );
 }
