@@ -1,0 +1,27 @@
+{
+  "name": "preguntale-el-pais-infra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --parameters KnowledgeBaseId=\"$KNOWLEDGE_BASE_ID\" --parameters ModelArn=\"$MODEL_ARN\" --parameters AllowedOrigin=\"${ALLOWED_ORIGIN:-*}\"",
+    "diff": "cdk diff"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "3.744.0",
+    "aws-cdk-lib": "2.177.0",
+    "constructs": "10.4.2"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "8.10.147",
+    "@types/node": "20.17.16",
+    "aws-cdk": "2.177.0",
+    "esbuild": "0.24.2",
+    "ts-node": "10.9.2",
+    "typescript": "5.7.3"
+  },
+  "engines": {
+    "node": ">=18.18"
+  }
+}
