@@ -1,0 +1,24 @@
+{
+  "name": "@pelp/testing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Set dorado, perfiles sintéticos y fixtures para evaluaciones y tests.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./golden-set.json": "./src/golden-set.json"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pelp/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "date": "2026-09-11",
+  "category": "all",
+  "count": 2,
+  "items": [
+    {
+      "notId": "000001a0-test-0001",
+      "titulo": "Nota de prueba sobre tarifas",
+      "bajada": "Bajada de la nota de prueba.",
+      "cuerpo": "<p>Cuerpo en <b>HTML</b> de la nota de prueba.</p>",
+      "cuerpo_texto": "Cuerpo en HTML de la nota de prueba.",
+      "fecha": "2026-09-11 08:15:00",
+      "fecha_creacion": "2026-09-11 08:10:00",
+      "categorySlug": "informacion/politica",
+      "link": "https://www.elpais.com.uy/informacion/politica/nota-de-prueba-sobre-tarifas",
+      "autor": "Redacción",
+      "imagenes": [],
+      "keywords": ["tarifas", "UTE"]
+    },
+    {
+      "notId": "000001a0-test-0002",
+      "titulo": "Segunda nota de prueba",
+      "bajada": "",
+      "cuerpo": "",
+      "cuerpo_texto": "Texto plano de la segunda nota.",
+      "fecha": "2026-09-11 09:00:00",
+      "fecha_creacion": "2026-09-11 08:55:00",
+      "categorySlug": "ovacion/futbol",
+      "link": "https://www.elpais.com.uy/ovacion/futbol/segunda-nota-de-prueba",
+      "autor": "",
+      "imagenes": [],
+      "keywords": []
+    }
+  ]
+}

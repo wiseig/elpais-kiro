@@ -1,0 +1,23 @@
+{
+  "name": "@pelp/channel-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Interfaz ChannelAdapter y helpers de render para canales (web, WhatsApp, Discord…).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pelp/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

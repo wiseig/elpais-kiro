@@ -1,0 +1,29 @@
+{
+  "name": "@pelp/infrastructure",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CDK (TypeScript): stacks pelp-data, pelp-engine, pelp-channels, pelp-backoffice, pelp-jobs.",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "synth": "cdk synth --quiet",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/util-dynamodb": "3.996.9",
+    "@pelp/domain": "workspace:*",
+    "aws-cdk-lib": "2.269.0",
+    "constructs": "10.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "aws-cdk": "2.1141.0",
+    "esbuild": "0.25.12",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

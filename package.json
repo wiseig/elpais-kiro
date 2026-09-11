@@ -1,27 +1,30 @@
 {
-  "name": "preguntale-el-pais-infra",
-  "version": "0.1.0",
+  "name": "pregunta-elpais",
   "private": true,
-  "scripts": {
-    "build": "tsc --noEmit",
-    "synth": "cdk synth",
-    "deploy": "cdk deploy --parameters KnowledgeBaseId=\"$KNOWLEDGE_BASE_ID\" --parameters ModelArn=\"$MODEL_ARN\" --parameters AllowedOrigin=\"${ALLOWED_ORIGIN:-*}\"",
-    "diff": "cdk diff"
+  "version": "0.2.0",
+  "description": "Preguntale a El País: asistente conversacional sobre notas publicadas por El País (Uruguay).",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22.12.0"
   },
-  "dependencies": {
-    "@aws-sdk/client-bedrock-agent-runtime": "3.744.0",
-    "aws-cdk-lib": "2.177.0",
-    "constructs": "10.4.2"
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "eslint .",
+    "synth": "pnpm --filter @pelp/infrastructure synth",
+    "deploy": "./scripts/deploy.sh",
+    "seed:config": "node scripts/seed-config.mjs",
+    "evals": "node scripts/run-evals.mjs"
   },
   "devDependencies": {
-    "@types/aws-lambda": "8.10.147",
-    "@types/node": "20.17.16",
-    "aws-cdk": "2.177.0",
-    "esbuild": "0.24.2",
-    "ts-node": "10.9.2",
-    "typescript": "5.7.3"
-  },
-  "engines": {
-    "node": ">=18.18"
+    "@eslint/js": "9.39.5",
+    "@types/node": "22.20.2",
+    "esbuild": "0.25.12",
+    "eslint": "9.39.5",
+    "turbo": "2.10.12",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "3.2.7"
   }
 }

@@ -1,0 +1,25 @@
+{
+  "name": "@pelp/bedrock",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Clientes de Bedrock: Converse con cachePoint, Retrieve con filtros y reordenado, Guardrails y medidor de costo.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "3.1131.0",
+    "@aws-sdk/client-bedrock-runtime": "3.1131.0",
+    "@pelp/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

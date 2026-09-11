@@ -1,0 +1,23 @@
+{
+  "name": "@pelp/prompts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prompts versionados del motor (canónica, adaptación, verificador, profiler, reescritura, clasificadores) con tests de snapshot.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pelp/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

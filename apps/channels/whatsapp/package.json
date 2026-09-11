@@ -1,0 +1,28 @@
+{
+  "name": "@pelp/channel-whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Adaptador de canal whatsapp (fase 3): verifica firma, normaliza a InboundMessage, encola en pelp-inbound y entrega AnswerReady.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1131.0",
+    "@aws-sdk/client-secrets-manager": "3.1131.0",
+    "@aws-sdk/client-sqs": "3.1131.0",
+    "@pelp/channel-sdk": "workspace:*",
+    "@pelp/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "8.10.163",
+    "@types/node": "22.20.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

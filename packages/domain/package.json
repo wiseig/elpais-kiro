@@ -1,0 +1,25 @@
+{
+  "name": "@pelp/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tipos, contratos, configuración, claves de datos y textos legales de Preguntale a El País.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts",
+    "./api": "./src/api.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}
