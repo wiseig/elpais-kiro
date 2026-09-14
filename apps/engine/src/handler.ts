@@ -173,12 +173,41 @@ async function handleChannelAction(engine: EngineDeps, inbound: InboundMessage):
 }
 
 /** Canales asíncronos (10.1): SQS pelp-inbound → motor → evento AnswerReady para el adaptador. */
+/**
+ * Un canal apagado en el registro no contesta. Se memoriza un minuto: la cola puede traer
+ * muchos mensajes seguidos y no tiene sentido leer el registro en cada uno. `web` nunca se apaga
+ * desde acá: para eso está el kill switch del servicio.
+ */
+let channelCache: { at: number; enabled: Map<string, boolean> } | undefined;
+
+export async function channelEnabled(engine: EngineDeps, channel: string, ttlMs = 60_000): Promise<boolean> {
+  if (!channelCache || Date.now() - channelCache.at > ttlMs) {
+    const record = await engine.store.getChannels().catch(() => undefined);
+    const enabled = new Map<string, boolean>();
+    for (const item of record?.items ?? []) enabled.set(item.id, item.enabled !== false);
+    channelCache = { at: Date.now(), enabled };
+  }
+  // Sin registro, todo sigue como antes: no queremos que un canal se caiga por un dato faltante.
+  return channelCache.enabled.get(channel) ?? true;
+}
+
+/** Solo para los tests. */
+export function resetChannelCache(): void {
+  channelCache = undefined;
+}
+
 export async function handleQueue(engine: EngineDeps, event: SQSEvent): Promise<{ batchItemFailures: { itemIdentifier: string }[] }> {
   const failures: { itemIdentifier: string }[] = [];
   for (const record of event.Records) {
     let claimed: { channel: string; requestId: string } | undefined;
     try {
       const message = queuedMessage(record.body);
+      // El interruptor de la pantalla de Canales era decorativo: nadie lo miraba, así que apagar
+      // un canal exigía redesplegar. Para una línea pública eso no sirve.
+      if (!(await channelEnabled(engine, message.inbound.channel))) {
+        engine.log.warn('channel.disabled', { channel: message.inbound.channel });
+        continue;
+      }
       const requestId = message.inbound.meta?.messageId || message.inbound.meta?.interactionId;
       let answer: Answer | undefined;
 

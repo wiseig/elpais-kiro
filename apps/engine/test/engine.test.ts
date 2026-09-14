@@ -3,6 +3,7 @@ import type { CorpusIndexRecord, InboundMessage, IncidentRecord, QuestionLogReco
 import { DEFAULT_INTENT_WORDS, NO_COVERAGE_MESSAGE, TENANT_ID, UNVERIFIED_MESSAGE } from '@pelp/domain';
 import { hashChannelIdentity } from '@pelp/domain/node';
 import { askQuestion, asExplicitQuestion, matchDeniedTopic, pickForDigest } from '../src/core/engine';
+import { channelEnabled, resetChannelCache } from '../src/handler';
 import { normalizeAdaptation } from '../src/core/personalization';
 import { recordDecision, resolveReader } from '../src/core/readers';
 import { resetBudgetCache } from '../src/core/budget';
@@ -305,6 +306,29 @@ describe('preguntas del día con notas viejas', () => {
     await askQuestion(deps, inbound('¿Cómo va a estar el tiempo hoy?'));
     const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor de El País'));
     expect(canonical?.userText).not.toContain('AVISO_DE_FECHA');
+  });
+});
+
+describe('interruptor de canales', () => {
+  it('un canal apagado en el registro no contesta', async () => {
+    const { deps, store } = buildDeps({});
+    resetChannelCache();
+    await store.putChannels({
+      items: [
+        { id: 'web', enabled: true, limits: { perUserPerHour: 20, maxMessageChars: 600 } },
+        { id: 'whatsapp', enabled: false, limits: { perUserPerHour: 20, maxMessageChars: 600 } },
+      ],
+      updatedAt: '2026-09-14T12:00:00.000Z',
+      updatedBy: 'admin@elpais.com.uy',
+    });
+    expect(await channelEnabled(deps, 'whatsapp')).toBe(false);
+    expect(await channelEnabled(deps, 'web')).toBe(true);
+  });
+
+  it('sin registro deja pasar todo: un dato faltante no puede tirar un canal', async () => {
+    const { deps } = buildDeps({});
+    resetChannelCache();
+    expect(await channelEnabled(deps, 'whatsapp')).toBe(true);
   });
 });
 
