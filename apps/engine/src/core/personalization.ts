@@ -132,70 +132,115 @@ export function normalizeAdaptation(answer: string, suggestions: string[]): Norm
   return { answer: text || answer.trim(), suggestions: merged.slice(0, 3), ...(why ? { why } : {}) };
 }
 
-/** Dos pasadas (9.3): adaptación con Haiku y verificador de hechos invariantes. */
+/**
+ * Adaptación y verificación. Si el verificador rechaza únicamente porque faltan hechos de la
+ * original, se hace una pasada de arreglo con la lista de lo que falta, igual que la canónica
+ * reintenta en modo estricto. Es lo único que quedó fallando después de sacar del texto la
+ * cláusula de relevancia y las repreguntas (14/9/2026): el modelo reordena para el perfil y
+ * pierde dos o tres datos por el camino.
+ */
 export async function adaptAndVerify(models: ModelGateway, log: Logger, input: AdaptationInput): Promise<AdaptationOutcome> {
   const { config } = input;
   const calls: ModelCall[] = [];
   const adaptationModel = config.personalization.adaptationModel;
-  const adaptation = await models.converse({
-    modelId: adaptationModel,
-    system: getPrompt('adaptation', config.prompts.adaptation),
-    userText: buildAdaptationUserMessage({ question: input.question, canonical: input.canonical, sources: input.sources, profile: input.profile, intensity: input.intensity }),
-    maxTokens: 900,
-    temperature: 0.2,
-    cacheSystem: true,
-    abortSignal: input.abortSignal,
+  const verifierModel = config.personalization.verifierModel;
+  const baseUserText = buildAdaptationUserMessage({
+    question: input.question,
+    canonical: input.canonical,
+    sources: input.sources,
+    profile: input.profile,
+    intensity: input.intensity,
   });
-  calls.push({ model: adaptationModel, purpose: 'adaptation', usage: adaptation.usage, costUsd: costUsd(config.pricing, adaptationModel, adaptation.usage), latencyMs: adaptation.latencyMs });
-  const parsed = parseJsonObject<AdaptationJson>(adaptation.text);
-  if (!parsed || typeof parsed.answer !== 'string' || !parsed.answer.trim()) {
-    return { calls, rejectedReason: 'adaptacion_invalida' };
-  }
-  // Lo que el modelo dejó fuera de lugar se mueve antes de verificar: si no, el verificador lee
-  // la cláusula de relevancia y las repreguntas como afirmaciones nuevas y tira todo.
-  const normalized = normalizeAdaptation(parsed.answer.trim(), stringList(parsed.suggestions, 3));
-  const adaptedAnswer = normalized.answer;
-  if (parsed.changed === false || adaptedAnswer === input.canonical.trim()) {
-    return { calls, rejectedReason: 'sin_cambios' };
-  }
-  const issues = validateAnswerText(adaptedAnswer, { maxParagraphs: config.answering.maxParagraphs, allowedUrlHosts: config.guardrails.allowedUrlHosts });
-  if (issues.length || hasMetaTalk(adaptedAnswer)) {
-    log.warn('adaptation.format_issues', { issues: issues.map((issue) => issue.code) });
-    return { calls, candidate: adaptedAnswer, rejectedReason: 'formato' };
+
+  const adapt = async (userText: string) => {
+    const result = await models.converse({
+      modelId: adaptationModel,
+      system: getPrompt('adaptation', config.prompts.adaptation),
+      userText,
+      maxTokens: 900,
+      temperature: 0.2,
+      cacheSystem: true,
+      abortSignal: input.abortSignal,
+    });
+    calls.push({ model: adaptationModel, purpose: 'adaptation', usage: result.usage, costUsd: costUsd(config.pricing, adaptationModel, result.usage), latencyMs: result.latencyMs });
+    return parseJsonObject<AdaptationJson>(result.text);
+  };
+
+  const verify = async (answer: string): Promise<VerifierVerdict> => {
+    const result = await models.converse({
+      modelId: verifierModel,
+      system: getPrompt('verifier', config.prompts.verifier),
+      userText: buildVerifierUserMessage({ canonical: input.canonical, adapted: answer, canonicalSources: input.sources, adaptedSources: input.sources }),
+      maxTokens: 700,
+      temperature: 0,
+      cacheSystem: true,
+      abortSignal: input.abortSignal,
+    });
+    calls.push({ model: verifierModel, purpose: 'verifier', usage: result.usage, costUsd: costUsd(config.pricing, verifierModel, result.usage), latencyMs: result.latencyMs });
+    const json = parseJsonObject<VerifierJson>(result.text);
+    return {
+      ok: json?.ok === true,
+      missingFacts: stringList(json?.missingFacts, 20),
+      newFacts: stringList(json?.newFacts, 20),
+      citationsEqual: json?.citationsEqual !== false,
+      opinionDetected: json?.opinionDetected === true,
+      ...(typeof json?.notes === 'string' ? { notes: json.notes.slice(0, 500) } : {}),
+    };
+  };
+
+  const passes = (verdict: VerifierVerdict): boolean =>
+    verdict.ok && verdict.missingFacts.length === 0 && verdict.newFacts.length === 0 && verdict.citationsEqual && !verdict.opinionDetected;
+
+  /** Solo falta contenido: se puede arreglar pidiéndolo. Con opinión o datos nuevos, no. */
+  const onlyMissing = (verdict: VerifierVerdict): boolean =>
+    verdict.missingFacts.length > 0 && verdict.newFacts.length === 0 && verdict.citationsEqual && !verdict.opinionDetected;
+
+  let parsed = await adapt(baseUserText);
+  let attempt = 0;
+  let lastVerdict: VerifierVerdict | undefined;
+  let lastAnswer: string | undefined;
+
+  while (attempt <= 1) {
+    if (!parsed || typeof parsed.answer !== 'string' || !parsed.answer.trim()) {
+      return { calls, ...(lastAnswer ? { candidate: lastAnswer } : {}), ...(lastVerdict ? { verdict: lastVerdict } : {}), rejectedReason: 'adaptacion_invalida' };
+    }
+    // Lo que el modelo dejó fuera de lugar se mueve antes de verificar: si no, el verificador lee
+    // la cláusula de relevancia y las repreguntas como afirmaciones nuevas y tira todo.
+    const normalized = normalizeAdaptation(parsed.answer.trim(), stringList(parsed.suggestions, 3));
+    const adaptedAnswer = normalized.answer;
+    lastAnswer = adaptedAnswer;
+    if (parsed.changed === false || adaptedAnswer === input.canonical.trim()) {
+      return { calls, rejectedReason: 'sin_cambios' };
+    }
+    const issues = validateAnswerText(adaptedAnswer, { maxParagraphs: config.answering.maxParagraphs, allowedUrlHosts: config.guardrails.allowedUrlHosts });
+    if (issues.length || hasMetaTalk(adaptedAnswer)) {
+      log.warn('adaptation.format_issues', { issues: issues.map((issue) => issue.code) });
+      return { calls, candidate: adaptedAnswer, rejectedReason: 'formato' };
+    }
+
+    const verdict = await verify(adaptedAnswer);
+    lastVerdict = verdict;
+    if (passes(verdict)) {
+      const explain = typeof parsed.explain === 'string' && parsed.explain.trim() ? parsed.explain.trim() : normalized.why;
+      return {
+        adapted: { answer: adaptedAnswer, ...(explain ? { explain: explain.slice(0, 300) } : {}), suggestions: normalized.suggestions },
+        verdict,
+        calls,
+      };
+    }
+    if (attempt === 1 || !onlyMissing(verdict)) break;
+
+    log.info('adaptation.repair', { missing: verdict.missingFacts.length });
+    parsed = await adapt(
+      `${baseUserText}
+
+<FALTAN>
+Tu versión anterior dejó afuera estos datos de la original. Volvé a escribirla con el mismo criterio de adaptación, pero incluyéndolos todos. Acortá la redacción si hace falta; no saques nada más.
+${verdict.missingFacts.map((fact) => `- ${fact}`).join('\n')}
+</FALTAN>`,
+    );
+    attempt += 1;
   }
 
-  const verifierModel = config.personalization.verifierModel;
-  const verification = await models.converse({
-    modelId: verifierModel,
-    system: getPrompt('verifier', config.prompts.verifier),
-    userText: buildVerifierUserMessage({ canonical: input.canonical, adapted: adaptedAnswer, canonicalSources: input.sources, adaptedSources: input.sources }),
-    maxTokens: 700,
-    temperature: 0,
-    cacheSystem: true,
-    abortSignal: input.abortSignal,
-  });
-  calls.push({ model: verifierModel, purpose: 'verifier', usage: verification.usage, costUsd: costUsd(config.pricing, verifierModel, verification.usage), latencyMs: verification.latencyMs });
-  const verdictJson = parseJsonObject<VerifierJson>(verification.text);
-  const verdict: VerifierVerdict = {
-    ok: verdictJson?.ok === true,
-    missingFacts: stringList(verdictJson?.missingFacts, 20),
-    newFacts: stringList(verdictJson?.newFacts, 20),
-    citationsEqual: verdictJson?.citationsEqual !== false,
-    opinionDetected: verdictJson?.opinionDetected === true,
-    ...(typeof verdictJson?.notes === 'string' ? { notes: verdictJson.notes.slice(0, 500) } : {}),
-  };
-  const passes = verdict.ok && verdict.missingFacts.length === 0 && verdict.newFacts.length === 0 && verdict.citationsEqual && !verdict.opinionDetected;
-  if (!passes) {
-    return { calls, candidate: adaptedAnswer, verdict, rejectedReason: 'verificador' };
-  }
-  const explain = typeof parsed.explain === 'string' && parsed.explain.trim() ? parsed.explain.trim() : normalized.why;
-  return {
-    adapted: {
-      answer: adaptedAnswer,
-      ...(explain ? { explain: explain.slice(0, 300) } : {}),
-      suggestions: normalized.suggestions,
-    },
-    verdict,
-    calls,
-  };
+  return { calls, ...(lastAnswer ? { candidate: lastAnswer } : {}), ...(lastVerdict ? { verdict: lastVerdict } : {}), rejectedReason: 'verificador' };
 }

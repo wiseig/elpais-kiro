@@ -309,6 +309,12 @@ export interface BiasSample {
   frameDivergence: number;
   opinionDetected: boolean;
   profiles: string[];
+  /**
+   * Qué encontró exactamente, cuando encontró algo. Sin el texto el reporte es un número sin
+   * explicación: no se puede saber si el modelo opinó de verdad o si el verificador se pasó de
+   * estricto, que es la pregunta que siempre aparece al mirarlo.
+   */
+  evidence?: { profile: string; issue: 'opinion' | 'hechos'; notes?: string; adapted: string };
 }
 
 export interface BiasReportRecord extends BaseRecord {

@@ -157,11 +157,18 @@ describe('prompts versionados', () => {
     expect(v2).toMatchSnapshot();
   });
 
+  it('la adaptación v3 prohíbe cerrar con una conclusión propia y snapshot', () => {
+    const v3 = getPrompt('adaptation', 'v3');
+    expect(v3).toContain('Tampoco cierres redondeando');
+    expect(v3).toContain('SOLO los hechos de la original');
+    expect(v3).toMatchSnapshot();
+  });
+
   it('versiones desconocidas fallan explícitamente', () => {
     expect(() => getPrompt('canonical', 'v99')).toThrow();
     expect(listPromptVersions().canonical).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']);
     expect(listPromptVersions().rewrite).toEqual(['v1', 'v2', 'v3']);
-    expect(listPromptVersions().adaptation).toEqual(['v1', 'v2']);
+    expect(listPromptVersions().adaptation).toEqual(['v1', 'v2', 'v3']);
     expect(listPromptVersions().offTopic).toEqual(['v1', 'v2']);
   });
 

@@ -619,6 +619,40 @@ describe('personalización', () => {
     expect(log.canonicalAnswer).not.toContain('Para tu bolsillo');
   });
 
+it('vuelve a pedirla con los hechos que faltaban y la sirve si la segunda pasa', async () => {
+    let verificaciones = 0;
+    const models = fakeModels({
+      verifierJson: () => {
+        verificaciones += 1;
+        return verificaciones === 1
+          ? JSON.stringify({ ok: false, missingFacts: ['1.300 trabajadores'], newFacts: [], citationsEqual: true, opinionDetected: false })
+          : JSON.stringify({ ok: true, missingFacts: [], newFacts: [], citationsEqual: true, opinionDetected: false });
+      },
+    });
+    const { deps, store } = buildDeps({ config: personalizedConfig(), models });
+    await readyReader(deps, store);
+    const result = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó en setiembre?'));
+
+    expect(result.answer.personalized).toBe(true);
+    expect(verificaciones).toBe(2);
+    // La segunda pasada lleva la lista de lo que faltaba.
+    const reparacion = models.calls.filter((call) => call.userText.includes('<FALTAN>'));
+    expect(reparacion).toHaveLength(1);
+    expect(reparacion[0]?.userText).toContain('1.300 trabajadores');
+  });
+
+  it('no repara cuando el problema es opinión: eso no se arregla pidiendo datos', async () => {
+    const models = fakeModels({
+      verifierJson: () => JSON.stringify({ ok: false, missingFacts: ['un dato'], newFacts: [], citationsEqual: true, opinionDetected: true }),
+    });
+    const { deps, store } = buildDeps({ config: personalizedConfig(), models });
+    await readyReader(deps, store);
+    const result = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó en setiembre?'));
+
+    expect(result.answer.personalized).toBe(false);
+    expect(models.calls.some((call) => call.userText.includes('<FALTAN>'))).toBe(false);
+  });
+
   it('sirve la canónica y registra incidente cuando el verificador rechaza', async () => {
     const models = fakeModels({ verifierJson: () => JSON.stringify({ ok: false, missingFacts: ['1.300 trabajadores'], newFacts: [], citationsEqual: true, opinionDetected: false }) });
     const { deps, store } = buildDeps({ config: personalizedConfig(), models });

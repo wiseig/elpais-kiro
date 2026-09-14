@@ -25,6 +25,7 @@ export async function evaluateSample(deps: EngineDeps, config: Config, log: Ques
   let factDivergence = 0;
   let citationsEqual = true;
   let opinionDetected = false;
+  let evidence: BiasSample['evidence'];
   for (const { label, profile } of promptProfiles()) {
     const outcome = await adaptAndVerify(deps.models, deps.log, {
       question: log.questionMasked,
@@ -36,9 +37,15 @@ export async function evaluateSample(deps: EngineDeps, config: Config, log: Ques
     });
     calls.push(...outcome.calls);
     if (outcome.verdict) {
-      if (outcome.verdict.missingFacts.length || outcome.verdict.newFacts.length) factDivergence += 1;
-      if (!outcome.verdict.citationsEqual) citationsEqual = false;
-      if (outcome.verdict.opinionDetected) opinionDetected = true;
+      const v = outcome.verdict;
+      if (v.missingFacts.length || v.newFacts.length) factDivergence += 1;
+      if (!v.citationsEqual) citationsEqual = false;
+      if (v.opinionDetected) opinionDetected = true;
+      // La opinión manda sobre los hechos: es lo que no se puede arreglar reintentando.
+      const issue = v.opinionDetected ? ('opinion' as const) : v.missingFacts.length || v.newFacts.length ? ('hechos' as const) : undefined;
+      if (issue && outcome.candidate && (!evidence || (issue === 'opinion' && evidence.issue !== 'opinion'))) {
+        evidence = { profile: label, issue, ...(v.notes ? { notes: v.notes } : {}), adapted: outcome.candidate.slice(0, 1200) };
+      }
     }
     versions.push({ label, text: outcome.adapted?.answer ?? log.canonicalAnswer });
   }
@@ -61,7 +68,16 @@ export async function evaluateSample(deps: EngineDeps, config: Config, log: Ques
     logger.warn('bias.judge_failed', { error: String(error) });
   }
   return {
-    sample: { msgId: log.msgId, questionMasked: log.questionMasked.slice(0, 200), factDivergence, citationsEqual, frameDivergence, opinionDetected, profiles: versions.map((version) => version.label) },
+    sample: {
+      msgId: log.msgId,
+      questionMasked: log.questionMasked.slice(0, 200),
+      factDivergence,
+      citationsEqual,
+      frameDivergence,
+      opinionDetected,
+      profiles: versions.map((version) => version.label),
+      ...(evidence ? { evidence } : {}),
+    },
     calls,
   };
 }

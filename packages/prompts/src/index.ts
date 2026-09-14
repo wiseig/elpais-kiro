@@ -6,6 +6,7 @@ import { CANONICAL_STRICT_SUFFIX_V5, CANONICAL_SYSTEM_V5 } from './canonical.v5'
 import { CANONICAL_STRICT_SUFFIX_V6, CANONICAL_SYSTEM_V6 } from './canonical.v6';
 import { ADAPTATION_SYSTEM_V1 } from './adaptation.v1';
 import { ADAPTATION_SYSTEM_V2 } from './adaptation.v2';
+import { ADAPTATION_SYSTEM_V3 } from './adaptation.v3';
 import { VERIFIER_SYSTEM_V1 } from './verifier.v1';
 import { PROFILER_SYSTEM_V1 } from './profiler.v1';
 import { REWRITE_SYSTEM_V1 } from './rewrite.v1';
@@ -20,7 +21,7 @@ export type PromptKind = 'canonical' | 'adaptation' | 'verifier' | 'profiler' | 
 
 const STATIC_PROMPTS: Record<Exclude<PromptKind, 'offTopic'>, Record<string, string>> = {
   canonical: { v1: CANONICAL_SYSTEM_V1, v2: CANONICAL_SYSTEM_V2, v3: CANONICAL_SYSTEM_V3, v4: CANONICAL_SYSTEM_V4, v5: CANONICAL_SYSTEM_V5, v6: CANONICAL_SYSTEM_V6 },
-  adaptation: { v1: ADAPTATION_SYSTEM_V1, v2: ADAPTATION_SYSTEM_V2 },
+  adaptation: { v1: ADAPTATION_SYSTEM_V1, v2: ADAPTATION_SYSTEM_V2, v3: ADAPTATION_SYSTEM_V3 },
   verifier: { v1: VERIFIER_SYSTEM_V1 },
   profiler: { v1: PROFILER_SYSTEM_V1 },
   rewrite: { v1: REWRITE_SYSTEM_V1, v2: REWRITE_SYSTEM_V2, v3: REWRITE_SYSTEM_V3 },
@@ -95,6 +96,7 @@ export {
   CANONICAL_STRICT_SUFFIX_V4,
   ADAPTATION_SYSTEM_V1,
   ADAPTATION_SYSTEM_V2,
+  ADAPTATION_SYSTEM_V3,
   VERIFIER_SYSTEM_V1,
   PROFILER_SYSTEM_V1,
   REWRITE_SYSTEM_V1,
