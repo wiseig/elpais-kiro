@@ -1,10 +1,12 @@
 export * as syncFeed from './sync-feed';
 export * as reconcileApi from './reconcile-api';
 export * as backfill from './backfill';
+export * as pruneCorpus from './prune-corpus';
 export * as profiler from './profiler';
 export * as evals from './evals';
 export * as biasReport from './bias-report';
 export * as costs from './costs';
+export * as ingestionStatus from './ingestion-status';
 export * from './lib/corpus';
 export * from './lib/feed';
 export * from './lib/dailybrief';

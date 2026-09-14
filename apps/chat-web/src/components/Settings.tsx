@@ -3,8 +3,15 @@ import { Link } from 'react-router-dom';
 import type { ReaderMode } from '@pelp/domain';
 import type { ConsentTextResponse, MeResponse } from '@pelp/domain/api';
 import { describeSaveError } from '../lib/errors';
+import { setThemePreference, useTheme, type ThemePreference } from '../lib/theme';
 import { CloseIcon } from './Icons';
 import { Modal } from './Modal';
+
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: 'system', label: 'Sistema' },
+  { value: 'light', label: 'Claro' },
+  { value: 'dark', label: 'Oscuro' },
+];
 
 interface Props {
   me: MeResponse;
@@ -31,13 +38,14 @@ function whySeeThis(me: MeResponse): string {
   return NO_PROFILE;
 }
 
-/** Ajustes (8.4 y 9.5): cambiar de modo, "por qué veo esto" y borrar datos. */
+/** Ajustes (8.4 y 9.5): cambiar de modo, "por qué veo esto" y borrar datos. Cajón lateral en escritorio. */
 export function Settings({ me, consent, onClose, onOpenGate, onChangeMode, onDelete }: Props) {
   const titleId = useId();
   const [busy, setBusy] = useState<'mode' | 'delete' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const { preference } = useTheme();
 
   async function run(kind: 'mode' | 'delete', action: () => Promise<void>) {
     setBusy(kind);
@@ -52,9 +60,19 @@ export function Settings({ me, consent, onClose, onOpenGate, onChangeMode, onDel
   }
 
   const locked = busy !== null;
+  const canToggle = me.mode === 'personalized' || (me.mode === 'neutral' && ageConfirmed);
+
+  function handleToggle() {
+    if (locked || me.mode === 'undecided') return;
+    if (me.mode === 'personalized') {
+      void run('mode', () => onChangeMode('neutral'));
+    } else if (ageConfirmed) {
+      void run('mode', () => onChangeMode('personalized', true));
+    }
+  }
 
   return (
-    <Modal labelledBy={titleId} onClose={onClose} className="modal--settings">
+    <Modal labelledBy={titleId} onClose={onClose} className="modal--settings" variant="drawer">
       <div className="modal-header">
         <h2 id={titleId} className="modal-title">
           Ajustes
@@ -71,54 +89,28 @@ export function Settings({ me, consent, onClose, onOpenGate, onChangeMode, onDel
           </p>
         ) : null}
 
+        <section className="settings-section" aria-labelledby={`${titleId}-theme`}>
+          <h3 id={`${titleId}-theme`}>Apariencia</h3>
+          <div className="segmented" role="radiogroup" aria-label="Tema">
+            {THEME_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={preference === option.value}
+                className={
+                  preference === option.value ? 'segmented-btn segmented-btn--active' : 'segmented-btn'
+                }
+                onClick={() => setThemePreference(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </section>
+
         <section className="settings-section" aria-labelledby={`${titleId}-mode`}>
           <h3 id={`${titleId}-mode`}>Personalización</h3>
-          <p>
-            Modo actual: <strong className={`mode-pill mode-pill--${me.mode}`}>{MODE_LABEL[me.mode]}</strong>
-          </p>
-
-          {me.mode === 'personalized' ? (
-            <>
-              <p className="muted">
-                Adaptamos el orden y el enfoque de las respuestas a tus intereses. Los hechos, las cifras
-                y las notas citadas no cambian.
-              </p>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={locked}
-                onClick={() => void run('mode', () => onChangeMode('neutral'))}
-              >
-                Desactivar personalización
-              </button>
-              <p className="hint">Al desactivarla borramos el perfil que habíamos inferido.</p>
-            </>
-          ) : null}
-
-          {me.mode === 'neutral' ? (
-            <>
-              <p className="muted">
-                Las respuestas son iguales para todos y no guardamos nada vinculado a vos.
-              </p>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={ageConfirmed}
-                  disabled={locked}
-                  onChange={(event) => setAgeConfirmed(event.target.checked)}
-                />
-                <span>Tengo {consent.minAgePersonalization} años o más</span>
-              </label>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={locked || !ageConfirmed}
-                onClick={() => void run('mode', () => onChangeMode('personalized', true))}
-              >
-                Activar personalización
-              </button>
-            </>
-          ) : null}
 
           {me.mode === 'undecided' ? (
             <>
@@ -134,13 +126,60 @@ export function Settings({ me, consent, onClose, onOpenGate, onChangeMode, onDel
                 Elegir una opción
               </button>
             </>
-          ) : null}
+          ) : (
+            <>
+              <div className="mode-switch-row">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={me.mode === 'personalized'}
+                    disabled={locked || !canToggle}
+                    aria-label="Activar personalización"
+                    onChange={handleToggle}
+                  />
+                  <span className="switch-track">
+                    <span className="switch-thumb" />
+                  </span>
+                </label>
+                <span className="mode-switch-label">
+                  <strong>{MODE_LABEL[me.mode]}</strong>
+                </span>
+              </div>
 
-          {busy === 'mode' ? (
-            <p className="hint" role="status">
-              Guardando…
-            </p>
-          ) : null}
+              {me.mode === 'personalized' ? (
+                <>
+                  <p className="muted">
+                    Adaptamos el orden y el enfoque de las respuestas a tus intereses. Los hechos, las
+                    cifras y las notas citadas no cambian.
+                  </p>
+                  <p className="hint">Al desactivarla borramos el perfil que habíamos inferido.</p>
+                </>
+              ) : (
+                <>
+                  <p className="muted">
+                    Las respuestas son iguales para todos y no guardamos nada vinculado a vos.
+                  </p>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={ageConfirmed}
+                      disabled={locked}
+                      onChange={(event) => setAgeConfirmed(event.target.checked)}
+                    />
+                    <span>Tengo {consent.minAgePersonalization} años o más</span>
+                  </label>
+                  <p className="hint">Marcá la casilla para poder activarla.</p>
+                </>
+              )}
+
+              {busy === 'mode' ? (
+                <p className="hint" role="status">
+                  Guardando…
+                </p>
+              ) : null}
+            </>
+          )}
         </section>
 
         <section className="settings-section" aria-labelledby={`${titleId}-why`}>

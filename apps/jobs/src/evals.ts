@@ -34,13 +34,18 @@ export async function runCase(deps: EngineDeps, config: Config, item: EvalCaseRe
       { models: deps.models, retriever: deps.retriever, guard: deps.guard, log: deps.log },
       { question: item.question, today: montevideoDay(deps.now()), model: config.answering.model, config, now: deps.now() },
     );
-    const citations = scoreCitations(outcome.sources.map((source) => source.url), item.expectedUrls);
+    const urls = outcome.sources.map((source) => source.url);
+    // Los casos que dependen del día traen patrón: si una fuente lo cumple, se da por citado.
+    const pattern = 'expectedUrlPattern' in item && typeof item.expectedUrlPattern === 'string' ? item.expectedUrlPattern : undefined;
+    const citations = pattern && urls.some((url) => new RegExp(pattern).test(url)) ? { precision: 1, recall: 1 } : scoreCitations(urls, item.expectedUrls);
     const lower = outcome.answer.toLowerCase();
     const mentionsOk = (item.mustMention ?? []).every((phrase) => lower.includes(phrase.toLowerCase()));
     const forbiddenOk = (item.mustNotMention ?? []).every((phrase) => !lower.includes(phrase.toLowerCase()));
     const coverageOk = outcome.hadCoverage === item.expectedCoverage;
     const citationsOk = !item.expectedCoverage || citations.recall > 0;
-    const passed = coverageOk && citationsOk && mentionsOk && forbiddenOk;
+    // Un pie "no pude verificar el resumen" trae fuentes y cobertura, así que pasaría todos los
+    // controles sin haber respondido nada. Para el set dorado es una falla.
+    const passed = coverageOk && citationsOk && mentionsOk && forbiddenOk && !outcome.unverified;
     return {
       caseId: item.id,
       question: item.question,

@@ -4,6 +4,7 @@ type Tone = 'info' | 'warn' | 'muted' | 'danger';
 
 const TONES: Record<NoticeCode, Tone> = {
   consent_required: 'warn',
+  age_confirmation_required: 'warn',
   service_paused: 'muted',
   rate_limited: 'warn',
   blocked: 'danger',

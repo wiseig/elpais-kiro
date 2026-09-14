@@ -14,9 +14,19 @@ ${safe}
     .join('\n\n');
 }
 
-export function buildCanonicalUserMessage(question: string, chunks: RetrievedChunk[], today: string): string {
+export function buildCanonicalUserMessage(
+  question: string,
+  chunks: RetrievedChunk[],
+  today: string,
+  /** Aviso de desfase: la pregunta pide algo actual y las notas son viejas (6.3). */
+  dateNotice?: string,
+  /** Pedido de panorama: los fragmentos son la tapa del día, no una búsqueda por tema. */
+  digestNotice?: string,
+): string {
+  const notice = dateNotice ? `\n<AVISO_DE_FECHA>\n${dateNotice}\n</AVISO_DE_FECHA>\n` : '';
+  const digest = digestNotice ? `\n<PEDIDO_DEL_DIA>\n${digestNotice}\n</PEDIDO_DEL_DIA>\n` : '';
   return `Fecha de hoy: ${today}.
-
+${notice}${digest}
 <FRAGMENTOS>
 ${renderChunks(chunks)}
 </FRAGMENTOS>

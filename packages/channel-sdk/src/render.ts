@@ -13,6 +13,11 @@ export function splitText(text: string, max: number): string[] {
     if (paragraph.length > max) {
       push();
       for (const sentence of paragraph.match(/[^.!?]+[.!?]*\s*/g) ?? [paragraph]) {
+        if (sentence.length > max) {
+          push();
+          for (let i = 0; i < sentence.length; i += max) out.push(sentence.slice(i, i + max).trim());
+          continue;
+        }
         if ((current + sentence).length > max) push();
         current += sentence;
       }

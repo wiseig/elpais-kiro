@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { TrendingItem } from '@pelp/domain/api';
 import { useApi } from '../../shared/ApiContext';
 import { useAsync } from '../../shared/useAsync';
@@ -67,6 +68,9 @@ export default function TendenciasPage() {
   const api = useApi();
   const [days, setDays] = useState(7);
   const trending = useAsync(() => api.trending(days, 'all'), [api, days]);
+  // Quién recibe el envío: hasta ahora la lista era invisible desde acá.
+  const mailing = useAsync(() => api.mailingLists(), [api]);
+  const newsroomCount = (mailing.data?.lists.find((list) => list.key === 'redaccion')?.subscriptions ?? []).filter((item) => item.confirmed).length;
   const notice = useNotice();
   const [sendOpen, setSendOpen] = useState(false);
   const [note, setNote] = useState('');
@@ -114,7 +118,7 @@ export default function TendenciasPage() {
     <div className="page">
       <PageHeader
         title="Tendencias y huecos"
-        description="Preguntas más frecuentes (normalizadas) y las que quedan sin cobertura: huecos editoriales para la redacción."
+        description="Preguntas más frecuentes (normalizadas) y las que quedan sin cobertura: huecos editoriales para la redacción. Solo cuenta lo que preguntan los lectores: las corridas de control quedan afuera."
         onRefresh={trending.reload}
         refreshing={trending.loading}
         actions={
@@ -170,7 +174,17 @@ export default function TendenciasPage() {
         }
       >
         <p className="muted">
-          Se envía por mail el resumen de los últimos {days} días a la lista de la redacción configurada en el servidor.
+          Se manda por mail el resumen de los últimos {days} días a la lista <strong>Redacción</strong>.{' '}
+          {mailing.data ? (
+            newsroomCount > 0 ? (
+              <>
+                Hoy la reciben {fmtInt(newsroomCount)} {newsroomCount === 1 ? 'dirección' : 'direcciones'}.
+              </>
+            ) : (
+              <strong>Hoy no la recibe nadie: el envío no le llega a ninguna dirección.</strong>
+            )
+          ) : null}{' '}
+          <Link to="/notificaciones">Ver o cambiar quién está en la lista</Link>.
         </p>
         <label className="check">
           <input type="checkbox" checked={onlyGaps} onChange={(event) => setOnlyGaps(event.target.checked)} />

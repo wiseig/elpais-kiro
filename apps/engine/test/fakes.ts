@@ -31,6 +31,7 @@ export interface FakeModelState {
   verifierJson: () => string;
   rewriteJson: () => string;
   offTopicJson: () => string;
+  deniedConfirmJson: () => string;
 }
 
 export function fakeModels(overrides: Partial<FakeModelState> = {}): FakeModelState & { converse(options: ConverseTextOptions): Promise<ConverseTextResult> } {
@@ -51,7 +52,8 @@ export function fakeModels(overrides: Partial<FakeModelState> = {}): FakeModelSt
       }),
     verifierJson: () => JSON.stringify({ ok: true, missingFacts: [], newFacts: [], citationsEqual: true, opinionDetected: false }),
     rewriteJson: () => JSON.stringify({ question: '¿Qué pasó con los trabajadores del Frigorífico Tacuarembó?' }),
-    offTopicJson: () => JSON.stringify({ offTopic: false, confidence: 0.95, deniedTopic: null }),
+    offTopicJson: () => JSON.stringify({ offTopic: false, confidence: 0.95, deniedTopic: null, evidence: null }),
+    deniedConfirmJson: () => JSON.stringify({ match: true, reason: 'coincide' }),
     ...overrides,
   };
   return {
@@ -62,8 +64,9 @@ export function fakeModels(overrides: Partial<FakeModelState> = {}): FakeModelSt
       if (options.system.startsWith('Actuás como editor de El País (Uruguay). Respondés')) text = state.canonicalJson();
       else if (options.system.includes('Reescribí la respuesta para este lector')) text = state.adaptationJson();
       else if (options.system.startsWith('Sos un verificador editorial')) text = state.verifierJson();
-      else if (options.system.includes('Reescribí la nueva pregunta')) text = state.rewriteJson();
+      else if (options.system.startsWith('Recibís los últimos turnos')) text = state.rewriteJson();
       else if (options.system.startsWith('Clasificás preguntas')) text = state.offTopicJson();
+      else if (options.system.startsWith('Decidís si una pregunta')) text = state.deniedConfirmJson();
       else text = '{}';
       return { text, usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 }, stopReason: 'end_turn', latencyMs: 5, modelId: options.modelId };
     },

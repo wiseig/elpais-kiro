@@ -49,10 +49,16 @@ describe('WhatsAppAdapter', () => {
     process.env.TERMS_URL = 'https://example.test/terminos';
     const adapter = new WhatsAppAdapter({});
     const [rendered] = adapter.render(answer, { channel: 'whatsapp', channelUserId: 'h', conversationId: 'c1' });
-    expect(rendered).toMatchObject({ kind: 'buttons', buttons: [expect.objectContaining({ id: 'consent_personalize' }), expect.objectContaining({ id: 'consent_neutral' })] });
+    expect(rendered).toMatchObject({ kind: 'buttons', buttons: [expect.objectContaining({ id: expect.stringMatching(/^consent_personalize:/) }), expect.objectContaining({ id: expect.stringMatching(/^consent_neutral:/) })] });
     expect(rendered?.kind === 'buttons' && rendered.text.endsWith('https://example.test/terminos')).toBe(true);
     expect(rendered?.kind === 'buttons' && rendered.text.length).toBeLessThanOrEqual(1024);
     delete process.env.TERMS_URL;
+  });
+
+  it('aplica un límite duro de 1.600 caracteres aun sin cortes de oración', () => {
+    const rendered = new WhatsAppAdapter({}).render({ ...answer, blocks: [{ type: 'text', text: 'x'.repeat(3201) }] } as Answer, { channel: 'whatsapp', channelUserId: 'h', conversationId: 'c1' });
+    expect(rendered).toHaveLength(3);
+    expect(rendered.every((payload) => payload.kind !== 'text' || payload.text.length <= 1600)).toBe(true);
   });
 
   it('entrega al teléfono resuelto y falla cerrado sin credenciales', async () => {

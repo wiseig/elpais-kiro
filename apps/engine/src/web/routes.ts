@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import type { AnswerBlock, ReaderRecord } from '@pelp/domain';
-import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, isUlid, ulid } from '@pelp/domain';
+import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, isAllowedUrl, isUlid, ulid } from '@pelp/domain';
 import type {
   ClientEventRequest,
   ConsentRequest,
@@ -9,13 +9,13 @@ import type {
   NeutralAnswerResponse,
   PatchMeRequest,
   SessionResponse,
-  SuggestionsResponse,
 } from '@pelp/domain/api';
 import type { EngineDeps } from '../core/engine';
 import { askQuestion } from '../core/engine';
 import { ConsentError, deleteReader, meResponse, readerMode, recordDecision, resolveReader } from '../core/readers';
-import { suggestions } from '../core/suggestions';
-import { WebAdapter, header, requestEvidence, type WebRequest } from './adapter';
+import { suggestionsResponse } from '../core/suggestions';
+import { resolvePreview } from '../core/preview';
+import { WebAdapter, requestEvidence, type WebRequest } from './adapter';
 import { issueSession } from './session';
 
 export interface WebDeps extends EngineDeps {
@@ -116,8 +116,7 @@ export async function handleHttp(deps: WebDeps, event: APIGatewayProxyEvent): Pr
 
     if (method === 'GET' && path === '/v1/suggestions') {
       const config = await deps.config.get();
-      const body: SuggestionsResponse = { items: await suggestions(deps.store, config, now) };
-      return json(200, body, origin);
+      return json(200, await suggestionsResponse(deps.store, config, now), origin);
     }
 
     if (method === 'POST' && path === '/v1/ask') {
@@ -181,6 +180,17 @@ export async function handleHttp(deps: WebDeps, event: APIGatewayProxyEvent): Pr
       return json(200, { deleted: true }, origin);
     }
 
+    if (method === 'GET' && path === '/v1/preview') {
+      const url = (event.queryStringParameters?.url ?? '').trim();
+      if (!url) throw new HttpError(400, 'Falta url.', 'invalid_url');
+      if (!isAllowedUrl(url, config.guardrails.allowedUrlHosts)) throw new HttpError(400, 'Solo se previsualizan notas de El País.', 'host_not_allowed');
+      const preview = await resolvePreview({ store: deps.store, now: deps.now }, config, url);
+      return {
+        ...json(200, preview, origin),
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=3600', ...corsHeaders(origin) },
+      };
+    }
+
     const neutralMatch = /^\/v1\/answers\/([A-Za-z0-9]+)\/neutral$/.exec(path);
     if (method === 'GET' && neutralMatch) {
       const answerId = neutralMatch[1] ?? '';
@@ -203,7 +213,8 @@ export async function handleHttp(deps: WebDeps, event: APIGatewayProxyEvent): Pr
       if (body.vote !== 'up' && body.vote !== 'down') throw new HttpError(400, 'vote inválido.', 'invalid_vote');
       const log = await deps.store.getQuestionLog(body.answerId);
       if (!log) throw new HttpError(404, 'Respuesta no encontrada.', 'not_found');
-      const owns = await deps.store.getConversation(reader.profile.readerId, log.convId);
+      // Los avisos por bloqueo no tienen conversación: se aceptan sin verificar pertenencia.
+      const owns = log.blocked ? true : Boolean(await deps.store.getConversation(reader.profile.readerId, log.convId));
       if (!owns) throw new HttpError(404, 'Respuesta no encontrada.', 'not_found');
       let comment = typeof body.comment === 'string' ? body.comment.trim().slice(0, 500) : '';
       if (comment) {

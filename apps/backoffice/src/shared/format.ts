@@ -114,6 +114,19 @@ export function yesNo(value: boolean | undefined | null): string {
   return value ? 'Sí' : 'No';
 }
 
+/** Une una lista en texto para editarla en un textarea, una por línea. */
+export function toLines(items: readonly string[]): string {
+  return items.join('\n');
+}
+
+/** Parsea un textarea de una lista por línea, recortando espacios y líneas vacías. */
+export function fromLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
 export function prettyJson(value: unknown): string {
   if (value === undefined) return '—';
   try {

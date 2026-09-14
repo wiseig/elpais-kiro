@@ -72,7 +72,7 @@ describe('DiscordAdapter', () => {
   it('renderiza consentimiento con botones y fuentes dentro de límites Discord', () => {
     const adapter = new DiscordAdapter({});
     expect(adapter.render(answer, { channel: 'discord', channelUserId: 'h', conversationId: 'c1' })).toEqual([
-      expect.objectContaining({ kind: 'buttons', buttons: [expect.objectContaining({ id: 'consent_personalize' }), expect.objectContaining({ id: 'consent_neutral' })] }),
+      expect.objectContaining({ kind: 'buttons', buttons: [expect.objectContaining({ id: expect.stringMatching(/^consent_personalize:/) }), expect.objectContaining({ id: expect.stringMatching(/^consent_neutral:/) })] }),
     ]);
     const rendered = adapter.render({ ...answer, blocks: [{ type: 'text', text: 'respuesta' }, { type: 'sources', items: [{ title: 'Nota', url: 'https://example.test', date: '2025-01-01', section: 'Política' }] }] } as Answer, { channel: 'discord', channelUserId: 'h', conversationId: 'c1' });
     expect(rendered[0]).toMatchObject({ kind: 'embed', description: 'respuesta', fields: [{ name: 'Nota', value: 'Política · 2025-01-01 · https://example.test' }] });

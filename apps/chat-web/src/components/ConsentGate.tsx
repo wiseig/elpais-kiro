@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ConsentTextResponse } from '@pelp/domain/api';
+import { BrandLockup } from '../brand/Brand';
 import { extractLeadingTitle, renderParagraphs } from '../lib/markdown';
 import { Modal } from './Modal';
 
@@ -27,13 +28,16 @@ export function ConsentGate({ consent, busy, error, onDecide, onClose }: Props) 
 
   return (
     <Modal labelledBy={titleId} onClose={onClose} closeOnBackdrop={false} className="modal--consent">
-      <div className="modal-header">
-        <h2 id={titleId} className="modal-title">
-          {title ?? 'Antes de empezar'}
-        </h2>
-        <button type="button" className="link-btn modal-close" onClick={onClose} disabled={busy}>
-          Cerrar
-        </button>
+      <div className="modal-header modal-header--stack">
+        <BrandLockup />
+        <div className="modal-header-row">
+          <h2 id={titleId} className="modal-title">
+            {title ?? 'Antes de empezar'}
+          </h2>
+          <button type="button" className="link-btn modal-close" onClick={onClose} disabled={busy}>
+            Cerrar
+          </button>
+        </div>
       </div>
 
       <div className="modal-body consent-body">
@@ -75,7 +79,7 @@ export function ConsentGate({ consent, busy, error, onDecide, onClose }: Props) 
           </button>
           <button
             type="button"
-            className="btn btn-dark"
+            className="btn btn-secondary"
             disabled={busy}
             onClick={() => onDecide('neutral', false)}
           >

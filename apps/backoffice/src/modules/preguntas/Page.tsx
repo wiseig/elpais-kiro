@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import type { QuestionDetail, QuestionListItem, QuestionsQuery } from '@pelp/domain/api';
 import { useApi } from '../../shared/ApiContext';
 import { useAsync } from '../../shared/useAsync';
@@ -7,12 +7,12 @@ import { PageHeader } from '../../shared/components/PageHeader';
 import { ErrorBox } from '../../shared/components/ErrorBox';
 import { Spinner } from '../../shared/components/Spinner';
 import { Card } from '../../shared/components/Card';
-import { Field } from '../../shared/components/Field';
+import { Field, Toggle } from '../../shared/components/Field';
 import { Table, type Column } from '../../shared/components/Table';
 import { Modal } from '../../shared/components/Modal';
 import { Chip, BoolChip } from '../../shared/components/Chip';
 import { Empty } from '../../shared/components/Empty';
-import { JsonView } from '../../shared/components/JsonView';
+import { VerdictView } from '../../shared/components/Verdict';
 import { Notice, useNotice } from '../../shared/components/Notice';
 import { fmtDate, fmtDateTime, fmtInt, fmtMs, fmtNumber, fmtTokens, fmtUsd, truncate } from '../../shared/format';
 
@@ -26,9 +26,10 @@ interface Filters {
   personalized: YesNo;
   q: string;
   limit: string;
+  includeControl: boolean;
 }
 
-const DEFAULT_FILTERS: Filters = { day: '', days: '7', channel: '', coverage: '', personalized: '', q: '', limit: '100' };
+const DEFAULT_FILTERS: Filters = { day: '', days: '7', channel: '', coverage: '', personalized: '', q: '', limit: '100', includeControl: false };
 
 function toQuery(filters: Filters): QuestionsQuery {
   return {
@@ -39,6 +40,7 @@ function toQuery(filters: Filters): QuestionsQuery {
     personalized: filters.personalized || undefined,
     q: filters.q.trim() || undefined,
     limit: Number(filters.limit) || undefined,
+    ...(filters.includeControl ? { includeControl: 'yes' as const } : {}),
   };
 }
 
@@ -57,15 +59,24 @@ function AnswerText({ text }: { text: string }) {
   return <div className="answer">{text}</div>;
 }
 
+/** Celda de la ficha técnica: rótulo arriba, valor abajo, con aire propio. */
+function MetaCell({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="meta__cell">
+      <span className="meta__label">{label}</span>
+      <span className="meta__value">{children}</span>
+    </div>
+  );
+}
+
 function DetailView({ detail }: { detail: QuestionDetail }) {
   const { log } = detail;
   return (
     <div className="detail">
-      <section>
-        <h3 className="h3">Pregunta</h3>
+      <section className="detail__ask">
         <p className="detail__question">{log.questionMasked}</p>
         {log.questionNormalized && (
-          <p className="muted">
+          <p className="muted small">
             Normalizada: <code>{log.questionNormalized}</code>
           </p>
         )}
@@ -80,25 +91,27 @@ function DetailView({ detail }: { detail: QuestionDetail }) {
           {log.blocked && <Chip tone="danger">bloqueada: {log.blocked}</Chip>}
           {log.evalMarked && <Chip tone="primary">en set de evaluación</Chip>}
         </div>
-        <dl className="kv kv--compact">
-          <dt>Modelo</dt>
-          <dd>
+      </section>
+
+      <section>
+        <h3 className="h3">Ficha técnica</h3>
+        <div className="meta">
+          <MetaCell label="Modelo">
             <code>{log.model}</code>
-          </dd>
-          <dt>Latencia</dt>
-          <dd>{fmtMs(log.latencyMs)}</dd>
-          <dt>Costo</dt>
-          <dd>{fmtUsd(log.costUsd, true)}</dd>
-          <dt>Tokens</dt>
-          <dd>
+          </MetaCell>
+          <MetaCell label="Latencia">{fmtMs(log.latencyMs)}</MetaCell>
+          <MetaCell label="Costo">{fmtUsd(log.costUsd, true)}</MetaCell>
+          <MetaCell label="Grounding">{log.groundingScore !== undefined ? fmtNumber(log.groundingScore, 2) : '—'}</MetaCell>
+          <MetaCell label="Relevancia">{log.relevanceScore !== undefined ? fmtNumber(log.relevanceScore, 2) : '—'}</MetaCell>
+          <MetaCell label="Tokens usados">
             {fmtTokens(log.usage.inputTokens)} entrada · {fmtTokens(log.usage.outputTokens)} salida
             {log.usage.cacheReadTokens > 0 ? ` · ${fmtTokens(log.usage.cacheReadTokens)} caché` : ''}
-          </dd>
-          <dt>Grounding / relevancia</dt>
-          <dd>
-            {log.groundingScore !== undefined ? fmtNumber(log.groundingScore, 2) : '—'} / {log.relevanceScore !== undefined ? fmtNumber(log.relevanceScore, 2) : '—'}
-          </dd>
-          <dt>Corpus</dt>
+          </MetaCell>
+        </div>
+        <dl className="kv meta-ids">
+          <dt>Temas</dt>
+          <dd>{log.topics.length > 0 ? log.topics.join(' · ') : <span className="muted">sin temas detectados</span>}</dd>
+          <dt>Versión del corpus</dt>
           <dd>
             <code>{log.corpusVersion}</code>
           </dd>
@@ -106,23 +119,22 @@ function DetailView({ detail }: { detail: QuestionDetail }) {
           <dd>
             <code>{log.convId}</code>
           </dd>
-          {log.topics.length > 0 && (
-            <>
-              <dt>Temas</dt>
-              <dd>{log.topics.join(', ')}</dd>
-            </>
-          )}
-          {log.feedback && (
-            <>
-              <dt>Feedback</dt>
-              <dd>
-                {log.feedback.vote === 'up' ? '👍 Útil' : '👎 No útil'} · {fmtDateTime(log.feedback.at)}
-                {log.feedback.comment && <blockquote className="quote">{log.feedback.comment}</blockquote>}
-              </dd>
-            </>
-          )}
+          <dt>Mensaje</dt>
+          <dd>
+            <code>{log.msgId}</code>
+          </dd>
         </dl>
       </section>
+
+      {log.feedback && (
+        <section>
+          <h3 className="h3">Feedback del lector</h3>
+          <p>
+            {log.feedback.vote === 'up' ? '👍 Útil' : '👎 No útil'} <span className="muted">· {fmtDateTime(log.feedback.at)}</span>
+          </p>
+          {log.feedback.comment && <blockquote className="quote">{log.feedback.comment}</blockquote>}
+        </section>
+      )}
 
       <div className="split">
         <section>
@@ -139,6 +151,17 @@ function DetailView({ detail }: { detail: QuestionDetail }) {
           )}
         </section>
       </div>
+
+      {log.unverifiedAnswer && (
+        <section>
+          <h3 className="h3">Resumen descartado por falta de sustento</h3>
+          <p className="muted small">
+            El modelo escribió esto, el guardrail de Bedrock no pudo respaldarlo contra las notas y el lector recibió, en
+            su lugar, las fuentes para leerlas completas. Sirve para ver qué afirmación se fue de los fragmentos.
+          </p>
+          <div className="answer answer--rejected">{log.unverifiedAnswer}</div>
+        </section>
+      )}
 
       <section>
         <h3 className="h3">Fuentes ({log.sources.length})</h3>
@@ -163,29 +186,52 @@ function DetailView({ detail }: { detail: QuestionDetail }) {
 
       <section>
         <h3 className="h3">Veredicto del verificador</h3>
-        {detail.verifier === undefined || detail.verifier === null ? <Empty text="Sin veredicto (no hubo adaptación)." /> : <JsonView value={detail.verifier} />}
+        <p className="muted small">
+          Cuando una respuesta se adapta al perfil del lector, un segundo modelo compara la adaptada contra la
+          canónica y solo la deja pasar si dicen exactamente los mismos hechos. Esto es lo que encontró.
+        </p>
+        {detail.verifier === undefined || detail.verifier === null ? (
+          <Empty text="Sin veredicto: esta respuesta no se adaptó, se sirvió la canónica." />
+        ) : (
+          <VerdictView verdict={detail.verifier} />
+        )}
       </section>
     </div>
   );
 }
 
-function QuestionDrawer({ item, onClose, onMarked }: { item: QuestionListItem; onClose: () => void; onMarked: (msgId: string) => void }) {
+function QuestionDrawer({
+  item,
+  onClose,
+  onMarkedChange,
+}: {
+  item: QuestionListItem;
+  onClose: () => void;
+  onMarkedChange: (msgId: string, marked: boolean) => void;
+}) {
   const api = useApi();
   const detail = useAsync(() => api.question(item.msgId), [api, item.msgId]);
-  const [marking, setMarking] = useState(false);
+  const [busy, setBusy] = useState(false);
   const notice = useNotice();
-  const marked = item.evalMarked || detail.data?.log.evalMarked;
+  const marked = Boolean(item.evalMarked || detail.data?.log.evalMarked);
 
-  const mark = async () => {
-    setMarking(true);
+  const toggleEval = async () => {
+    setBusy(true);
     try {
-      const result = await api.markEval(item.msgId);
-      notice.show('success', `Marcada para evaluación (caso ${result.caseId}).`);
-      onMarked(item.msgId);
+      if (marked) {
+        await api.unmarkEval(item.msgId);
+        notice.show('success', 'La pregunta salió del set de evaluación.');
+        onMarkedChange(item.msgId, false);
+      } else {
+        const result = await api.markEval(item.msgId);
+        notice.show('success', `Agregada al set de evaluación (caso ${result.caseId}).`);
+        onMarkedChange(item.msgId, true);
+      }
+      detail.reload();
     } catch (error) {
       notice.show('error', errorMessage(error));
     } finally {
-      setMarking(false);
+      setBusy(false);
     }
   };
 
@@ -198,11 +244,21 @@ function QuestionDrawer({ item, onClose, onMarked }: { item: QuestionListItem; o
       onClose={onClose}
       footer={
         <>
+          <p className="drawer-help small muted">
+            {marked
+              ? 'Está en el set de evaluación: se corre todas las noches y avisa si la respuesta cambia de cobertura o de fuentes.'
+              : 'Agregarla al set de evaluación guarda esta pregunta con sus fuentes actuales como respuesta esperada. Se corre todas las noches para avisar si algo se rompe.'}
+          </p>
           <button type="button" className="btn btn--ghost" onClick={onClose}>
             Cerrar
           </button>
-          <button type="button" className="btn btn--primary" onClick={() => void mark()} disabled={marking || Boolean(marked)}>
-            {marked ? 'Ya está en el set de evaluación' : marking ? 'Marcando…' : 'Marcar para evaluación'}
+          <button
+            type="button"
+            className={marked ? 'btn btn--danger-outline' : 'btn btn--primary'}
+            onClick={() => void toggleEval()}
+            disabled={busy}
+          >
+            {busy ? 'Guardando…' : marked ? 'Sacar del set de evaluación' : 'Agregar al set de evaluación'}
           </button>
         </>
       }
@@ -229,9 +285,11 @@ export default function PreguntasPage() {
 
   const update = <K extends keyof Filters>(key: K, value: Filters[K]) => setDraft((current) => ({ ...current, [key]: value }));
 
-  const onMarked = (msgId: string) => {
-    list.setData((current) => (current ? { items: current.items.map((item) => (item.msgId === msgId ? { ...item, evalMarked: true } : item)) } : current));
-    setSelected((current) => (current && current.msgId === msgId ? { ...current, evalMarked: true } : current));
+  const onMarkedChange = (msgId: string, marked: boolean) => {
+    list.setData((current) =>
+      current ? { ...current, items: current.items.map((item) => (item.msgId === msgId ? { ...item, evalMarked: marked } : item)) } : current,
+    );
+    setSelected((current) => (current && current.msgId === msgId ? { ...current, evalMarked: marked } : current));
   };
 
   const columns: Column<QuestionListItem>[] = [
@@ -243,6 +301,12 @@ export default function PreguntasPage() {
       render: (row) => (
         <span className="cell-text" title={row.questionMasked}>
           {truncate(row.questionMasked, 110)}
+          {row.isControl && (
+            <>
+              {' '}
+              <Chip>control</Chip>
+            </>
+          )}
           {row.blocked && (
             <>
               {' '}
@@ -292,8 +356,8 @@ export default function PreguntasPage() {
 
       <Card title="Filtros">
         <form className="filters" onSubmit={submit}>
-          <Field label="Día">
-            <input className="input" type="date" value={draft.day} onChange={(event) => update('day', event.target.value)} />
+          <Field label="Texto" className="filters__wide">
+            <input className="input" type="search" value={draft.q} onChange={(event) => update('q', event.target.value)} placeholder="Buscar en la pregunta" />
           </Field>
           <Field label="Últimos N días" hint={draft.day ? 'Se ignora si elegís un día.' : undefined}>
             <select className="input" value={draft.days} onChange={(event) => update('days', event.target.value)} disabled={Boolean(draft.day)}>
@@ -302,6 +366,9 @@ export default function PreguntasPage() {
               <option value="30">30 días</option>
               <option value="90">90 días</option>
             </select>
+          </Field>
+          <Field label="Día">
+            <input className="input" type="date" value={draft.day} onChange={(event) => update('day', event.target.value)} />
           </Field>
           <Field label="Canal">
             <input className="input" list="channel-options" value={draft.channel} onChange={(event) => update('channel', event.target.value)} placeholder="todos" />
@@ -325,9 +392,6 @@ export default function PreguntasPage() {
               <option value="no">No</option>
             </select>
           </Field>
-          <Field label="Texto" className="filters__wide">
-            <input className="input" type="search" value={draft.q} onChange={(event) => update('q', event.target.value)} placeholder="Buscar en la pregunta" />
-          </Field>
           <Field label="Límite">
             <select className="input" value={draft.limit} onChange={(event) => update('limit', event.target.value)}>
               <option value="50">50</option>
@@ -337,6 +401,15 @@ export default function PreguntasPage() {
             </select>
           </Field>
           <div className="filters__actions">
+            <Toggle
+              checked={draft.includeControl}
+              onChange={(next) => {
+                const updated = { ...draft, includeControl: next };
+                setDraft(updated);
+                setFilters(updated);
+              }}
+              label="Incluir preguntas de control"
+            />
             <button type="submit" className="btn btn--primary">
               Buscar
             </button>
@@ -354,7 +427,14 @@ export default function PreguntasPage() {
         </form>
       </Card>
 
-      <Card title={list.data ? `Resultados (${fmtInt(list.data.items.length)})` : 'Resultados'}>
+      <Card
+        title={list.data ? `Resultados (${fmtInt(list.data.items.length)})` : 'Resultados'}
+        description={
+          list.data && list.data.controlExcluded > 0
+            ? `Se ocultaron ${fmtInt(list.data.controlExcluded)} preguntas de control: las del set dorado, que el smoke test dispara contra la API en cada despliegue.`
+            : undefined
+        }
+      >
         {list.error && <ErrorBox error={list.error} onRetry={list.reload} />}
         {list.loading && !list.data && <Spinner />}
         {list.data && (
@@ -370,7 +450,7 @@ export default function PreguntasPage() {
         )}
       </Card>
 
-      {selected && <QuestionDrawer item={selected} onClose={() => setSelected(null)} onMarked={onMarked} />}
+      {selected && <QuestionDrawer item={selected} onClose={() => setSelected(null)} onMarkedChange={onMarkedChange} />}
     </div>
   );
 }

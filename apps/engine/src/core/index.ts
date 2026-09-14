@@ -9,4 +9,5 @@ export * from './canonical';
 export * from './personalization';
 export * from './budget';
 export * from './suggestions';
+export * from './preview';
 export * from './engine';

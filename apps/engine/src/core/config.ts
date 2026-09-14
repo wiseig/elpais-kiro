@@ -28,6 +28,10 @@ export class ConfigProvider implements ConfigSource {
       record = await this.store.putConfig(defaultConfig(CURRENT_CONSENT_TEXT_VERSION, this.env.TERMS_URL ?? '/terminos'), 'system', 'seed inicial');
     }
     const parsed = ConfigSchema.safeParse(record.config);
+    if (!parsed.success) {
+      // Nunca silencioso: si la config guardada no valida, el motor sigue con los defaults y lo dice.
+      console.warn(JSON.stringify({ level: 'warn', message: 'config.invalid_fallback_defaults', version: record.version, issues: parsed.error.issues.slice(0, 5).map((issue) => `${issue.path.join('.')}: ${issue.message}`) }));
+    }
     const base = parsed.success ? parsed.data : defaultConfig(CURRENT_CONSENT_TEXT_VERSION, this.env.TERMS_URL ?? '/terminos');
     const config = this.applyEnv(base);
     this.cached = { config, at: Date.now() };

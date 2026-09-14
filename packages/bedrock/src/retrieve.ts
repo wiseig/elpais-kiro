@@ -50,6 +50,8 @@ export function toChunk(result: KnowledgeBaseRetrievalResult, allowedUrlHosts: r
   const date = metadataString(metadata, 'date');
   let dateEpoch = metadataNumber(metadata, 'dateEpoch');
   if (!Number.isFinite(dateEpoch)) dateEpoch = date ? dayToEpoch(date) : 0;
+  const imageUrl = metadataString(metadata, 'imageUrl');
+  const deck = metadataString(metadata, 'deck');
   return {
     text,
     score: typeof result.score === 'number' ? result.score : 0,
@@ -59,6 +61,8 @@ export function toChunk(result: KnowledgeBaseRetrievalResult, allowedUrlHosts: r
     date,
     dateEpoch,
     section: metadataString(metadata, 'section'),
+    ...(imageUrl && isAllowedUrl(imageUrl, [...allowedUrlHosts, 'elpais.com.uy', 'glbimg.com', 'cloudfront.net', 'amazonaws.com']) ? { imageUrl } : {}),
+    ...(deck ? { deck } : {}),
   };
 }
 
@@ -146,7 +150,14 @@ export function sourcesFromChunks(chunks: RetrievedChunk[], usedIndexes: number[
     const chunk = chunks.find((candidate) => candidate.index === index);
     if (!chunk || seen.has(chunk.articleId)) continue;
     seen.add(chunk.articleId);
-    sources.push({ title: chunk.title, url: chunk.url, date: chunk.date, section: chunk.section });
+    sources.push({
+      title: chunk.title,
+      url: chunk.url,
+      date: chunk.date,
+      section: chunk.section,
+      ...(chunk.imageUrl ? { imageUrl: chunk.imageUrl } : {}),
+      ...(chunk.deck ? { deck: chunk.deck } : {}),
+    });
   }
   return sources;
 }

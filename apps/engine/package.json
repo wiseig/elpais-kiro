@@ -21,7 +21,8 @@
     "@pelp/bedrock": "workspace:*",
     "@pelp/channel-sdk": "workspace:*",
     "@pelp/domain": "workspace:*",
-    "@pelp/prompts": "workspace:*"
+    "@pelp/prompts": "workspace:*",
+    "@pelp/testing": "workspace:*"
   },
   "devDependencies": {
     "@types/aws-lambda": "8.10.163",

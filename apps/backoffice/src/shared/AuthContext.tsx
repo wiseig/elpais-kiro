@@ -1,7 +1,9 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { RuntimeConfig } from './config';
 import {
+  changePassword as changePasswordRequest,
   clearStoredAuth,
+  completeNewPassword as completeNewPasswordRequest,
   isExpiringSoon,
   loginWithPassword,
   readStoredAuth,
@@ -20,6 +22,10 @@ export interface AuthContextValue {
   status: AuthStatus;
   user: AuthUser | null;
   login: (email: string, password: string) => Promise<LoginResult>;
+  /** Cierra el desafío NEW_PASSWORD_REQUIRED y deja la sesión iniciada. */
+  completeNewPassword: (email: string, session: string, newPassword: string) => Promise<void>;
+  /** Cambia la contraseña del usuario que tiene la sesión abierta. */
+  changePassword: (previous: string, proposed: string) => Promise<void>;
   logout: () => void;
   /** IdToken vigente; renueva si vence en menos de 2 minutos o si `force` es true. */
   getIdToken: (force?: boolean) => Promise<string | null>;
@@ -63,6 +69,14 @@ export function AuthProvider({ runtime, children }: { runtime: RuntimeConfig; ch
     [runtime.cognito, apply],
   );
 
+  const completeNewPassword = useCallback(
+    async (email: string, session: string, newPassword: string): Promise<void> => {
+      const auth = await completeNewPasswordRequest(runtime.cognito, email, session, newPassword);
+      apply(auth);
+    },
+    [runtime.cognito, apply],
+  );
+
   const getIdToken = useCallback(
     async (force = false): Promise<string | null> => {
       const current = sessionRef.current.auth;
@@ -94,11 +108,23 @@ export function AuthProvider({ runtime, children }: { runtime: RuntimeConfig; ch
     [runtime.cognito, apply, logout],
   );
 
+  const changePassword = useCallback(
+    async (previous: string, proposed: string): Promise<void> => {
+      // Renueva antes de pedir el cambio: con el access token vencido Cognito contesta
+      // "no autorizado" y el formulario culparía a la contraseña actual.
+      await getIdToken();
+      const current = sessionRef.current.auth;
+      if (!current) throw new Error('No hay sesión abierta.');
+      await changePasswordRequest(runtime.cognito, current.accessToken, previous, proposed);
+    },
+    [runtime.cognito, getIdToken],
+  );
+
   const status: AuthStatus = !session.auth || !session.user ? 'anonymous' : session.user.isAdmin ? 'authenticated' : 'not-admin';
 
   const value = useMemo<AuthContextValue>(
-    () => ({ runtime, status, user: session.user, login, logout, getIdToken }),
-    [runtime, status, session.user, login, logout, getIdToken],
+    () => ({ runtime, status, user: session.user, login, completeNewPassword, changePassword, logout, getIdToken }),
+    [runtime, status, session.user, login, completeNewPassword, changePassword, logout, getIdToken],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

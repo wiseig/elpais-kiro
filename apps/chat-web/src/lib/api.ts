@@ -14,6 +14,7 @@ import type {
   MeResponse,
   NeutralAnswerResponse,
   PatchMeRequest,
+  PreviewResponse,
   SuggestionsResponse,
 } from '@pelp/domain/api';
 import { ensureSession, refreshSession, SessionError } from './session';
@@ -120,6 +121,11 @@ export class ApiClient {
 
   getSuggestions(): Promise<SuggestionsResponse> {
     return this.request<SuggestionsResponse>('GET', '/v1/suggestions');
+  }
+
+  /** Metadatos (imagen, bajada) de una nota de El País, para previsualizarla como fuente. */
+  getPreview(url: string): Promise<PreviewResponse> {
+    return this.request<PreviewResponse>('GET', `/v1/preview?url=${encodeURIComponent(url)}`);
   }
 
   /* ------------------------------- Interno ------------------------------- */

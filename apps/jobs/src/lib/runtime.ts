@@ -37,7 +37,7 @@ export function runtime(): { engine: EngineDeps; corpus: CorpusDeps } {
     corpus: {
       store,
       s3: new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' }),
-      bucket: process.env.CORPUS_BUCKET ?? '',
+      bucket,
       now,
     },
   };

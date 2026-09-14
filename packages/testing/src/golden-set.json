@@ -107,7 +107,8 @@
       "mustNotMention": [],
       "tags": [
         "ambiente"
-      ]
+      ],
+      "expectedUrlPattern": "informacion/servicios/.*(pronostico|tiempo|clima)"
     },
     {
       "id": "gold-008",

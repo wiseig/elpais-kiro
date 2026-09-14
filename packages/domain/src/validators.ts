@@ -85,8 +85,50 @@ export function textOfBlocks(blocks: AnswerBlock[]): string {
 }
 
 /** Frase exacta de la regla 5 del prompt canónico. */
+/**
+ * Cierre de cortesía tipo "podés leer la nota completa en El País". No es un hecho y no está en
+ * ninguna fuente, así que al medir sustento arrastra el puntaje: una paráfrasis fiel pasaba de
+ * 0,97 a 0,63 solo por llevarlo (medido contra el guardrail el 14/9/2026). El lector igual lo ve:
+ * la respuesta trae un bloque `cta` aparte, tanto en la web como en los canales.
+ */
+const READING_VERB = /\b(le[eé]|leer|leel[ao]|ley[eé]ndo|consult[aá]|ampli[aá]|encontr[aá]|mir[aá]|invitamos|te dejo|te dejamos|segu[ií])/i;
+const EL_PAIS = /\bel pa[ií]s\b/i;
+
+/** Dónde arranca la última oración: después del último punto, signo o salto que no sea el final. */
+function lastSentenceStart(text: string): number {
+  for (let index = text.length - 2; index >= 0; index -= 1) {
+    if ('.!?\n'.includes(text[index] ?? '')) {
+      const rest = text.slice(index + 1);
+      if (rest.trim()) return index + 1;
+    }
+  }
+  return 0;
+}
+
+/** El texto sin ese cierre; si no lo tiene, o si es todo lo que hay, devuelve lo mismo. */
+export function withoutClosingInvitation(answer: string): string {
+  const trimmed = answer.trimEnd();
+  const start = lastSentenceStart(trimmed);
+  const last = trimmed.slice(start);
+  if (!EL_PAIS.test(last) || !READING_VERB.test(last)) return trimmed;
+  return trimmed.slice(0, start).trim() || trimmed;
+}
+
 export const NO_COVERAGE_MESSAGE = 'El País no publicó sobre esto en los últimos días.';
 
+/**
+ * Hay cobertura, pero el verificador de sustento no dejó pasar el resumen. Decir "no publicó"
+ * era mentira: el lector veía la nota exacta listada como fuente debajo del aviso (14/9/2026).
+ */
+export const UNVERIFIED_MESSAGE =
+  'El País sí publicó sobre esto, pero no pude armar un resumen que respalde palabra por palabra. Te dejo las notas para que las leas completas.';
+
+/**
+ * Detecta la frase de "sin cobertura" al inicio, incluso cuando el modelo la escribe con el
+ * tema en el medio ("El País no publicó sobre Fulano en los últimos días"): así no se le
+ * antepone otra vez la frase canónica y el lector no la lee dos veces.
+ */
 export function startsWithNoCoverage(text: string): boolean {
-  return text.trim().replace(/\.$/, '').startsWith(NO_COVERAGE_MESSAGE.replace(/\.$/, ''));
+  const head = text.trim().slice(0, 160).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return /^el pais no (publico|ha publicado|tiene notas)/.test(head);
 }

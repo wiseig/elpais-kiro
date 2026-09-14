@@ -36,6 +36,7 @@ export const keys = {
   incident: (day: string, ts: string, id: string): Key => ({ PK: `${T}#DAY#${day}`, SK: `INCIDENT#${ts}#${id}` }),
 
   cache: (questionHash: string, corpusVersion: string): Key => ({ PK: `${T}#CACHE#${questionHash}`, SK: `V#${corpusVersion}` }),
+  preview: (urlHash: string): Key => ({ PK: `${T}#PREVIEW#${urlHash}`, SK: 'OG' }),
 
   corpus: (articleId: string): Key => ({ PK: `${T}#CORPUS#${articleId}`, SK: 'META' }),
   corpusDay: (day: string): Key => ({ PK: `${T}#CORPUSDAY`, SK: `D#${day}` }),

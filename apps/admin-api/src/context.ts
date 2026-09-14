@@ -1,7 +1,10 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { BedrockAgentClient } from '@aws-sdk/client-bedrock-agent';
+import { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
+import { CloudWatchEventsClient } from '@aws-sdk/client-cloudwatch-events';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { S3Client } from '@aws-sdk/client-s3';
+import { CognitoIdentityProviderClient } from '@aws-sdk/client-cognito-identity-provider';
 import { SNSClient } from '@aws-sdk/client-sns';
 import { ConfigProvider, DynamoDb, Store } from '@pelp/engine/core';
 
@@ -13,7 +16,10 @@ export interface AdminContext {
   s3: S3Client;
   lambda: LambdaClient;
   bedrockAgent: BedrockAgentClient;
+  events: CloudWatchEventsClient;
+  cloudwatch: CloudWatchClient;
   sns: SNSClient;
+  cognito: CognitoIdentityProviderClient;
   env: NodeJS.ProcessEnv;
 }
 
@@ -98,7 +104,10 @@ export function buildContext(actor: string): AdminContext {
       s3: new S3Client({ region }),
       lambda: new LambdaClient({ region }),
       bedrockAgent: new BedrockAgentClient({ region }),
+      events: new CloudWatchEventsClient({ region }),
+      cloudwatch: new CloudWatchClient({ region }),
       sns: new SNSClient({ region }),
+      cognito: new CognitoIdentityProviderClient({ region }),
       env: process.env,
     };
   }

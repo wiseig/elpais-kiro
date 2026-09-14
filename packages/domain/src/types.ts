@@ -9,6 +9,22 @@ export type TenantId = typeof TENANT_ID;
 /** Canales conocidos. Cualquier string es válido: un canal nuevo es un adaptador nuevo. */
 export type ChannelId = 'web' | 'whatsapp' | 'discord' | (string & Record<never, never>);
 
+/** Acciones funcionales aceptadas por el consumidor asíncrono de canales. */
+export const CHANNEL_ACTIONS = [
+  'consent_personalize',
+  'confirm_age_personalize',
+  'consent_neutral',
+  'neutral',
+  'personalize',
+  'delete_data',
+  'help',
+] as const;
+export type ChannelAction = (typeof CHANNEL_ACTIONS)[number];
+
+export function isChannelAction(value: unknown): value is ChannelAction {
+  return typeof value === 'string' && (CHANNEL_ACTIONS as readonly string[]).includes(value);
+}
+
 export interface InboundMessage {
   tenantId: string;
   channel: ChannelId;
@@ -18,7 +34,7 @@ export interface InboundMessage {
   text: string;
   locale?: string;
   receivedAt: string;
-  /** Metadatos del adaptador: userAgent, guildId, ipPrefixHash, uaHash… nunca PII en claro. */
+  /** Metadatos del adaptador: acciones tipadas, ids de entrega y hashes; nunca PII en claro. */
   meta?: Record<string, string>;
 }
 
@@ -27,10 +43,15 @@ export interface SourceItem {
   url: string;
   date: string;
   section: string;
+  /** Imagen principal de la nota (feed `imagenes[0]` o `og:image`). */
+  imageUrl?: string;
+  /** Bajada de la nota, para previews. */
+  deck?: string;
 }
 
 export type NoticeCode =
   | 'consent_required'
+  | 'age_confirmation_required'
   | 'service_paused'
   | 'rate_limited'
   | 'blocked'
@@ -56,6 +77,10 @@ export interface Answer {
   explain?: string;
   /** Id de la canónica, para "ver versión neutral". */
   neutralAnswerId?: string;
+  /** Versión del texto efectivamente mostrado por una puerta de consentimiento. */
+  consentTextVersion?: string;
+  /** Edad mínima que la confirmación explícita debe declarar. */
+  consentMinAge?: number;
   latencyMs: number;
 }
 
@@ -134,6 +159,8 @@ export interface RetrievedChunk {
   date: string;
   dateEpoch: number;
   section: string;
+  imageUrl?: string;
+  deck?: string;
   /** Posición 1-based con la que el chunk se presenta al modelo. */
   index?: number;
 }

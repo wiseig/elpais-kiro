@@ -4,6 +4,11 @@ export interface GoldenCase {
   id: string;
   question: string;
   expectedUrls: string[];
+  /**
+   * Alternativa a `expectedUrls` para preguntas que dependen del día: el pronóstico o el dólar
+   * cambian de nota cada jornada, así que se valida la forma de la URL y no una nota fija.
+   */
+  expectedUrlPattern?: string;
   expectedCoverage: boolean;
   mustMention: string[];
   mustNotMention: string[];

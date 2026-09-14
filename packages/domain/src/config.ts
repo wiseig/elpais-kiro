@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { CONSENT_TEXT_VERSIONS } from './consent/index';
+import { DEFAULT_DIGEST_SECTIONS, DEFAULT_INTENT_WORDS } from './normalize';
 
 /**
  * Configuración global (spec v2, sección 13). Un solo JSON, versionado,
@@ -15,7 +17,7 @@ export const ConfigSchema = z.object({
   }),
   consent: z.object({
     /** sha256 del texto vigente del Apéndice A.1. */
-    textVersion: z.string().min(8),
+    textVersion: z.string().min(8).refine((version) => CONSENT_TEXT_VERSIONS[version] !== undefined, 'versión de consentimiento desconocida'),
     mode: z.enum(['single', 'split']),
     termsUrl: z.string().min(1),
     reshowOnVersionChange: z.boolean(),
@@ -33,7 +35,7 @@ export const ConfigSchema = z.object({
       recencyWeight: z.number().min(0).max(1),
       maxChunksPerArticle: z.number().int().min(1).max(10),
       /** Días en los que la recencia decae linealmente a 0. */
-      recencyHorizonDays: z.number().int().min(1).max(3650).default(365),
+      recencyHorizonDays: z.number().int().min(1).max(3650).default(90),
       /** Mínimo de resultados con score >= minScore antes de ampliar sin filtro de fecha. */
       minResultsBeforeWiden: z.number().int().min(1).max(20).default(3),
     }),
@@ -68,6 +70,21 @@ export const ConfigSchema = z.object({
     adaptationModel: modelId,
     verifierModel: modelId,
     autoLowered: z.boolean(),
+    /**
+     * Cuánto tolera el reporte de sesgo antes de bajar la intensidad. Exigir cero divergencias
+     * sobre 90 comparaciones hechas por un modelo chico no se cumple nunca: el 13/9/2026 una sola
+     * muestra con una opinión dejó la personalización en 0.
+     */
+    biasTolerance: z
+      .object({
+        /** Proporción máxima de muestras con divergencia de hechos. */
+        factDivergenceRate: z.number().min(0).max(1).default(0.15),
+        /** Proporción máxima de muestras con opinión detectada. */
+        opinionRate: z.number().min(0).max(1).default(0.1),
+        /** Muestras mínimas para que el reporte pueda bajar la intensidad. */
+        minSamples: z.number().int().min(1).max(100).default(10),
+      })
+      .default({}),
     /** Último valor de intensidad con reporte de sesgo limpio (para la auto-bajada). */
     lastCleanIntensity: z.number().min(0).max(1).default(0),
     /** Preguntas nuevas desde el último perfil que disparan ProfileDue. */
@@ -82,7 +99,7 @@ export const ConfigSchema = z.object({
     offTopicClassifier: z.object({
       enabled: z.boolean(),
       threshold: z.number().min(0).max(1),
-      model: modelId.default('anthropic.claude-haiku-4-5-20251001-v1:0'),
+      model: modelId.default('us.amazon.nova-lite-v1:0'),
     }),
     allowedUrlHosts: z.array(z.string()),
   }),
@@ -96,6 +113,9 @@ export const ConfigSchema = z.object({
   corpus: z.object({
     syncEveryMinutes: z.number().int().min(5),
     reconcileDaily: z.boolean(),
+    /** Días de notas que se conservan. Lo más viejo se borra del bucket, del índice y de la
+     *  base de conocimiento para que el costo de almacenamiento no crezca sin techo (ADR 0007). */
+    retentionDays: z.number().int().min(7).max(3650).default(90),
     /** ingestionJobId del último sync exitoso. Forma parte de la clave de caché. */
     version: z.string(),
     knowledgeBaseId: z.string(),
@@ -117,13 +137,57 @@ export const ConfigSchema = z.object({
     verifier: z.string(),
     profiler: z.string(),
     rewrite: z.string().default('v1'),
-    offTopic: z.string().default('v1'),
+    offTopic: z.string().default('v2'),
     biasJudge: z.string().default('v1'),
   }),
+  /**
+   * Cómo se leen las consultas antes de buscar. Son listas de palabras, no expresiones: la
+   * redacción agrega formas nuevas desde el backoffice y el motor las toma en menos de un minuto.
+   */
+  intents: z
+    .object({
+      /** Marcan que la consulta ya es una pregunta o un pedido; sin ninguna se trata como tema. */
+      questionMarkers: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.questionMarkers]),
+      /** Hasta cuántas palabras se envuelve como tema ("¿Qué publicó El País sobre X?"). */
+      topicMaxWords: z.number().int().min(1).max(20).default(DEFAULT_INTENT_WORDS.topicMaxWords),
+      digest: z
+        .object({
+          words: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.digestWords]),
+          today: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.digestToday]),
+          standalone: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.digestStandalone]),
+          maxWords: z.number().int().min(1).max(12).default(DEFAULT_INTENT_WORDS.digestMaxWords),
+          /** Cuántas notas del día se le pasan al modelo para armar el panorama. */
+          notes: z.number().int().min(3).max(20).default(8),
+          /** Secciones que no entran en un panorama (el horóscopo se llevaba medio resumen). */
+          skipSections: z.array(z.string()).default(['horoscopo', 'feng-shui', 'numerologia', 'suplementos-especiales', 'tvshow']),
+          /** Orden editorial; lo que no está acá va después, alfabético. */
+          sectionOrder: z
+            .array(z.string())
+            .default(['informacion', 'politica', 'economia-y-mercado', 'negocios', 'mundo', 'ovacion', 'opinion']),
+          /**
+           * Secciones que el lector puede pedir por su nombre ("resumen de judiciales"):
+           * `names` es cómo las escribe y `match`, los prefijos de categoría del corpus.
+           */
+          sections: z
+            .array(z.object({ names: z.array(z.string()).min(1), match: z.array(z.string()).min(1) }))
+            .default(() => DEFAULT_DIGEST_SECTIONS.map((section) => ({ names: [...section.names], match: [...section.match] }))),
+          /**
+           * Hasta cuántos días atrás se juntan notas para el panorama de una sección. Judiciales
+           * o Sindicales no publican todos los días y "no hay nada" sería falso. Si en la ventana
+           * hay más notas que el tope de la consulta, se quedan las más nuevas, que es lo que un
+           * panorama quiere.
+           */
+          sectionDays: z.number().int().min(1).max(60).default(14),
+        })
+        .default({}),
+    })
+    .default({}),
   suggestions: z
     .object({
       days: z.number().int().min(1).max(30).default(7),
       max: z.number().int().min(1).max(12).default(6),
+      /** Días de vida de una nota para servir de sugerencia en la portada. */
+      freshDays: z.number().int().min(1).max(30).default(3),
       fallback: z.array(z.string()).default([]),
     })
     .default({}),
@@ -134,7 +198,14 @@ export type ConfigInput = z.input<typeof ConfigSchema>;
 
 export const MODEL_SONNET = 'us.anthropic.claude-sonnet-4-6';
 export const MODEL_HAIKU = 'anthropic.claude-haiku-4-5-20251001-v1:0';
+/** Amazon Nova: los únicos modelos generativos invocables en la cuenta 178042202224 (cuenta de programa de canal, ADR 0006). */
+export const MODEL_NOVA_PRO = 'us.amazon.nova-pro-v1:0';
+export const MODEL_NOVA_LITE = 'us.amazon.nova-lite-v1:0';
+export const MODEL_NOVA_PREMIER = 'us.amazon.nova-premier-v1:0';
 export const MODEL_TITAN_EMBED = 'amazon.titan-embed-text-v2:0';
+/** Modelos por defecto. Cuando la cuenta obtenga acceso a Anthropic, basta cambiar la config (sección 6.6). */
+export const DEFAULT_MODEL_CANONICAL = MODEL_NOVA_PRO;
+export const DEFAULT_MODEL_LIGHT = MODEL_NOVA_LITE;
 
 export const DEFAULT_SUGGESTIONS = [
   '¿Qué pasó hoy en Uruguay?',
@@ -165,8 +236,8 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       minAgePersonalization: 18,
     },
     answering: {
-      model: MODEL_SONNET,
-      fallbackModel: MODEL_HAIKU,
+      model: DEFAULT_MODEL_CANONICAL,
+      fallbackModel: DEFAULT_MODEL_LIGHT,
       maxSources: 5,
       maxParagraphs: 3,
       retrieval: {
@@ -175,13 +246,13 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
         minScore: 0.45,
         recencyWeight: 0.3,
         maxChunksPerArticle: 3,
-        recencyHorizonDays: 365,
+        recencyHorizonDays: 90,
         minResultsBeforeWiden: 3,
       },
       groundingThreshold: 0.7,
       relevanceThreshold: 0.5,
       cacheTtlMinutes: 60,
-      queryRewrite: { enabled: true, model: MODEL_HAIKU },
+      queryRewrite: { enabled: true, model: DEFAULT_MODEL_LIGHT },
       memoryTurns: 6,
       ctaText: 'Leé la cobertura completa en El País',
       ctaUrl: 'https://www.elpais.com.uy/',
@@ -197,8 +268,8 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       requireConsent: true,
       rolloutPercent: 0,
       channels: ['web'],
-      adaptationModel: MODEL_HAIKU,
-      verifierModel: MODEL_HAIKU,
+      adaptationModel: DEFAULT_MODEL_LIGHT,
+      verifierModel: DEFAULT_MODEL_LIGHT,
       autoLowered: false,
       lastCleanIntensity: 0,
       profileEveryQuestions: 5,
@@ -209,7 +280,7 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       maxQuestionChars: 500,
       deniedTopics: ['apuestas', 'diagnóstico médico personal', 'asesoría legal o financiera personal'],
       blockedWords: [],
-      offTopicClassifier: { enabled: true, threshold: 0.7, model: MODEL_HAIKU },
+      offTopicClassifier: { enabled: true, threshold: 0.7, model: DEFAULT_MODEL_LIGHT },
       allowedUrlHosts: ['www.elpais.com.uy', 'elpais.com.uy'],
     },
     limits: {
@@ -222,6 +293,7 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
     corpus: {
       syncEveryMinutes: 60,
       reconcileDaily: true,
+      retentionDays: 90,
       version: 'initial',
       knowledgeBaseId: '',
       dataSourceId: '',
@@ -230,17 +302,21 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       [MODEL_SONNET]: { inputPerMTok: 3.0, outputPerMTok: 15.0, cacheReadFactor: 0.1, cacheWriteFactor: 1.25 },
       [MODEL_HAIKU]: { inputPerMTok: 1.0, outputPerMTok: 5.0, cacheReadFactor: 0.1, cacheWriteFactor: 1.25 },
       [MODEL_TITAN_EMBED]: { inputPerMTok: 0.02, outputPerMTok: 0, cacheReadFactor: 1, cacheWriteFactor: 1 },
+      'amazon.nova-pro-v1:0': { inputPerMTok: 0.8, outputPerMTok: 3.2, cacheReadFactor: 0.25, cacheWriteFactor: 1 },
+      'amazon.nova-lite-v1:0': { inputPerMTok: 0.06, outputPerMTok: 0.24, cacheReadFactor: 0.25, cacheWriteFactor: 1 },
+      'amazon.nova-micro-v1:0': { inputPerMTok: 0.035, outputPerMTok: 0.14, cacheReadFactor: 0.25, cacheWriteFactor: 1 },
+      'amazon.nova-premier-v1:0': { inputPerMTok: 2.5, outputPerMTok: 12.5, cacheReadFactor: 0.25, cacheWriteFactor: 1 },
     },
     prompts: {
-      canonical: 'v1',
+      canonical: 'v4',
       adaptation: 'v1',
       verifier: 'v1',
       profiler: 'v1',
-      rewrite: 'v1',
-      offTopic: 'v1',
+      rewrite: 'v3',
+      offTopic: 'v2',
       biasJudge: 'v1',
     },
-    suggestions: { days: 7, max: 6, fallback: DEFAULT_SUGGESTIONS },
+    suggestions: { days: 7, max: 6, freshDays: 3, fallback: DEFAULT_SUGGESTIONS },
   } satisfies ConfigInput);
 }
 

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, CURRENT_CONSENT_TEXT_VERSION } from '@pelp/domain';
-import type { ConsentTextResponse, MeResponse } from '@pelp/domain/api';
+import type { ConsentTextResponse, MeResponse, SuggestionCard } from '@pelp/domain/api';
+import { BrandBadge } from './brand/Brand';
 import { Chat } from './components/Chat';
-import { Logo } from './components/Header';
 import { Spinner } from './components/Icons';
 import { ApiClient } from './lib/api';
 import { loadConfig } from './lib/config';
@@ -13,6 +13,13 @@ import { clearToken } from './lib/session';
 import { NotFound } from './pages/NotFound';
 import { Terms } from './pages/Terms';
 
+interface Suggestions {
+  items: string[];
+  cards: SuggestionCard[];
+}
+
+const EMPTY_SUGGESTIONS: Suggestions = { items: [], cards: [] };
+
 type Boot =
   | { status: 'loading' }
   | { status: 'error'; message: string }
@@ -21,7 +28,7 @@ type Boot =
       api: ApiClient;
       me: MeResponse;
       consent: ConsentTextResponse;
-      suggestions: string[];
+      suggestions: Suggestions;
     };
 
 /** Si `GET /v1/consent/text` falla usamos el texto vigente empaquetado en @pelp/domain. */
@@ -39,8 +46,7 @@ function fallbackConsent(): ConsentTextResponse {
 function BootScreen({ error, onRetry }: { error?: string; onRetry?: () => void }) {
   return (
     <div className="boot">
-      <Logo />
-      <h1 className="boot-title">Preguntale a El País</h1>
+      <BrandBadge size={96} />
       {error ? (
         <>
           <p className="boot-error" role="alert">
@@ -76,8 +82,11 @@ export function App() {
         api.getConsentText().catch(() => fallbackConsent()),
         api
           .getSuggestions()
-          .then((res) => res.items.filter((item) => typeof item === 'string' && item.trim().length > 0))
-          .catch((): string[] => []),
+          .then((res) => ({
+            items: res.items.filter((item) => typeof item === 'string' && item.trim().length > 0),
+            cards: res.cards ?? [],
+          }))
+          .catch((): Suggestions => EMPTY_SUGGESTIONS),
       ]);
       setBoot({ status: 'ready', api, me, consent, suggestions });
     } catch (err) {
@@ -113,7 +122,8 @@ export function App() {
         api={boot.api}
         me={boot.me}
         consent={boot.consent}
-        suggestions={boot.suggestions}
+        suggestionCards={boot.suggestions.cards}
+        suggestionItems={boot.suggestions.items}
         onMeChange={handleMeChange}
         onDeleted={handleDeleted}
       />

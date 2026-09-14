@@ -1,16 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Answer, NoticeCode } from '@pelp/domain';
-import type { ConsentTextResponse, MeResponse } from '@pelp/domain/api';
+import type { ConsentTextResponse, MeResponse, SuggestionCard } from '@pelp/domain/api';
 import type { ApiClient } from '../lib/api';
 import { describeError, describeSaveError } from '../lib/errors';
 import { prefersReducedMotion } from '../lib/format';
-import { loadHistory, saveHistory, type ChatItem } from '../lib/history';
+import { isNearBottom, scrollToBottom, scrollToTop } from '../lib/scroll';
+import {
+  clearConversations,
+  getConversation,
+  listConversations,
+  newConversationId,
+  removeConversation,
+  saveConversation,
+  type ChatItem,
+  type ConversationSummary,
+} from '../lib/history';
 import { getToken } from '../lib/session';
-import { AnswerCard } from './AnswerCard';
 import { Composer } from './Composer';
 import { ConsentGate, type GateDecision } from './ConsentGate';
-import { Footer, Header } from './Header';
-import { Spinner } from './Icons';
+import { Conversation } from './Conversation';
+import { Header } from './Header';
+import { HelpModal } from './HelpModal';
+import { HistoryModal } from './HistoryModal';
+import { Home } from './Home';
+import { Rail } from './Rail';
 import { Settings } from './Settings';
 
 export const MAX_QUESTION_LENGTH = 500;
@@ -19,7 +32,8 @@ interface Props {
   api: ApiClient;
   me: MeResponse;
   consent: ConsentTextResponse;
-  suggestions: string[];
+  suggestionCards: SuggestionCard[];
+  suggestionItems: string[];
   onMeChange: (me: MeResponse) => void;
   /** Se llama después de `DELETE /v1/me`: la app pide una sesión nueva y remonta el chat. */
   onDeleted: () => Promise<void>;
@@ -29,19 +43,53 @@ function hasNotice(answer: Answer, code: NoticeCode): boolean {
   return answer.blocks.some((block) => block.type === 'notice' && block.code === code);
 }
 
-export function Chat({ api, me, consent, suggestions, onMeChange, onDeleted }: Props) {
+interface InitialState {
+  activeId: string;
+  items: ChatItem[];
+  conversationId: string | undefined;
+}
+
+/** Retoma la conversación más reciente guardada para este token, o arranca una en blanco. */
+function loadInitialState(token: string | null): InitialState {
+  const [mostRecent] = listConversations(token);
+  if (mostRecent) {
+    const record = getConversation(token, mostRecent.id);
+    if (record) return { activeId: record.id, items: record.items, conversationId: record.conversationId };
+  }
+  return { activeId: newConversationId(), items: [], conversationId: undefined };
+}
+
+export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeChange, onDeleted }: Props) {
   const token = getToken();
-  const [snapshot] = useState(() => loadHistory(token));
-  const [items, setItems] = useState<ChatItem[]>(snapshot.items);
-  const conversationRef = useRef<string | undefined>(snapshot.conversationId);
+  const [initial] = useState(() => loadInitialState(token));
+  const [activeId, setActiveId] = useState(initial.activeId);
+  const [items, setItems] = useState<ChatItem[]>(initial.items);
+  const conversationRef = useRef<string | undefined>(initial.conversationId);
+  const [conversations, setConversations] = useState<ConversationSummary[]>(() => listConversations(token));
   const [loading, setLoading] = useState(false);
   const [gateOpen, setGateOpen] = useState(me.needsConsent);
   const [consentBusy, setConsentBusy] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const idPrefix = useRef(Date.now().toString(36));
   const idCounter = useRef(0);
-  const endRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  /** Panel que scrollea: el resto de la pantalla (riel, encabezado, composer) queda fijo. */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const composerWrapRef = useRef<HTMLDivElement>(null);
+  /** true mientras el lector está a ~120px del final: ahí seguimos pegados a la última línea. */
+  const pinnedRef = useRef(true);
+  /** Saltea el auto-scroll al final una vez, cuando el cambio de `items` es un cambio de
+   * conversación (que ya se scrollea al principio), no un mensaje nuevo. */
+  const skipNextAutoScrollRef = useRef(false);
+  /** En la portada no hay nada que seguir: sin esto, el texto que se escribe solo cambiaba el
+   * alto de la página y el auto-scroll llevaba al lector hacia abajo. */
+  const hasItemsRef = useRef(false);
+  hasItemsRef.current = items.length > 0;
 
   const newId = () => {
     idCounter.current += 1;
@@ -49,13 +97,71 @@ export function Chat({ api, me, consent, suggestions, onMeChange, onDeleted }: P
   };
 
   useEffect(() => {
-    saveHistory(getToken(), { items, conversationId: conversationRef.current });
-  }, [items]);
+    if (items.length === 0) return;
+    saveConversation(getToken(), activeId, { conversationId: conversationRef.current, items });
+    setConversations(listConversations(getToken()));
+  }, [items, activeId]);
 
+  // Mensaje nuevo (pregunta, respuesta, error) o cambio de `loading`: si el lector está
+  // pegado al final lo seguimos; si se corrió hacia arriba, le ofrecemos volver con un botón
+  // en vez de arrastrarlo de vuelta.
   useEffect(() => {
+    if (skipNextAutoScrollRef.current) {
+      skipNextAutoScrollRef.current = false;
+      return;
+    }
     if (items.length === 0 && !loading) return;
-    endRef.current?.scrollIntoView({ block: 'end', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    if (pinnedRef.current) {
+      scrollToBottom(scrollRef.current, prefersReducedMotion() ? 'auto' : 'smooth');
+    } else {
+      setShowJumpToBottom(true);
+    }
   }, [items, loading]);
+
+  // Mientras el scroll de la ventana esté cerca del final lo consideramos "pegado"; si el
+  // lector sube, dejamos de perseguirlo hasta que vuelva (a mano o con el botón flotante).
+  useEffect(() => {
+    function handleScroll() {
+      const near = isNearBottom(scrollRef.current);
+      pinnedRef.current = near;
+      if (near) setShowJumpToBottom(false);
+    }
+    const node = scrollRef.current;
+    if (!node) return;
+    handleScroll();
+    node.addEventListener('scroll', handleScroll, { passive: true });
+    return () => node.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Mientras está pegado al final, cualquier cambio de tamaño del contenido (streaming,
+  // imágenes de fuentes que terminan de cargar, "¿Por qué veo esto?" que se expande, el
+  // formulario de feedback) también nos lleva al final, sin animación para no marear.
+  useEffect(() => {
+    const node = mainRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current && hasItemsRef.current) scrollToBottom(scrollRef.current, 'auto');
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  // El composer crece al escribir varias líneas: si estamos pegados al final, seguimos ahí.
+  useEffect(() => {
+    const node = composerWrapRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current && hasItemsRef.current) scrollToBottom(scrollRef.current, 'auto');
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  function jumpToBottom() {
+    pinnedRef.current = true;
+    setShowJumpToBottom(false);
+    scrollToBottom(scrollRef.current, prefersReducedMotion() ? 'auto' : 'smooth');
+  }
 
   const refreshMe = useCallback(() => {
     api
@@ -72,6 +178,10 @@ export function Chat({ api, me, consent, suggestions, onMeChange, onDeleted }: P
         setGateOpen(true);
         return;
       }
+      // Un mensaje nuevo siempre nos vuelve a pegar al final, aunque el lector se hubiera
+      // corrido hacia arriba mientras leía respuestas anteriores.
+      pinnedRef.current = true;
+      setShowJumpToBottom(false);
       if (retryOfId) {
         setItems((prev) => prev.filter((item) => item.id !== retryOfId));
       } else {
@@ -109,9 +219,38 @@ export function Chat({ api, me, consent, suggestions, onMeChange, onDeleted }: P
   );
 
   function resetConversation() {
+    skipNextAutoScrollRef.current = true;
+    pinnedRef.current = true;
+    setShowJumpToBottom(false);
     conversationRef.current = undefined;
     setItems([]);
-    window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    setActiveId(newConversationId());
+    scrollToTop(scrollRef.current, prefersReducedMotion() ? 'auto' : 'smooth');
+  }
+
+  function selectConversation(id: string) {
+    if (id === activeId) return;
+    skipNextAutoScrollRef.current = true;
+    pinnedRef.current = true;
+    setShowJumpToBottom(false);
+    const record = getConversation(getToken(), id);
+    conversationRef.current = record?.conversationId;
+    setItems(record?.items ?? []);
+    setActiveId(id);
+    scrollToTop(scrollRef.current, prefersReducedMotion() ? 'auto' : 'smooth');
+  }
+
+  function removeFromHistory(id: string) {
+    removeConversation(getToken(), id);
+    setConversations(listConversations(getToken()));
+    if (id === activeId) resetConversation();
+  }
+
+  function clearAllHistory() {
+    clearConversations(getToken());
+    setConversations([]);
+    setHistoryOpen(false);
+    resetConversation();
   }
 
   async function decide(decision: GateDecision, ageConfirmed: boolean) {
@@ -143,107 +282,57 @@ export function Chat({ api, me, consent, suggestions, onMeChange, onDeleted }: P
     await onDeleted();
   }
 
-  const modalOpen = gateOpen || settingsOpen;
+  const modalOpen = gateOpen || settingsOpen || helpOpen || historyOpen;
   const consentMissing = me.needsConsent && !gateOpen;
-  const showEmpty = items.length === 0 && !loading;
+  const showHome = items.length === 0 && !loading;
 
   return (
     <>
-      <div className="app-shell" aria-hidden={modalOpen ? true : undefined}>
-        <Header
+      <div className={gateOpen ? 'app-frame app-frame--blurred' : 'app-frame'} aria-hidden={modalOpen || undefined}>
+        <Rail
+          open={navOpen}
+          onClose={() => setNavOpen(false)}
+          conversations={conversations}
+          activeId={activeId}
+          onSelectConversation={selectConversation}
+          onNewConversation={resetConversation}
+          onOpenHelp={() => setHelpOpen(true)}
+          onOpenHistory={() => setHistoryOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
-          onNewConversation={items.length > 0 ? resetConversation : undefined}
-          settingsOpen={settingsOpen}
+          personalizationActive={me.mode === 'personalized'}
         />
 
-        <main className="main">
-          {showEmpty ? (
-            <section className="empty">
-              <h2 className="empty-title">¿Qué querés saber?</h2>
-              <p className="empty-text">
-                Preguntá sobre la actualidad. Respondemos usando únicamente notas publicadas por El País y
-                te mostramos las fuentes.
-              </p>
-              {suggestions.length > 0 ? (
-                <div className="empty-suggestions">
-                  <p className="chips-title">Preguntas sugeridas</p>
-                  <div className="chips">
-                    {suggestions.map((question) => (
-                      <button
-                        type="button"
-                        className="chip"
-                        key={question}
-                        onClick={() => void send(question)}
-                      >
-                        {question}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </section>
-          ) : null}
+        <div className="workspace" aria-hidden={navOpen ? true : undefined}>
+          <Header onOpenMenu={() => setNavOpen(true)} mode={me.mode} onOpenSettings={() => setSettingsOpen(true)} />
 
-          <ol className="messages" aria-live="polite" aria-relevant="additions" aria-busy={loading}>
-            {items.map((item) => {
-              if (item.kind === 'user') {
-                return (
-                  <li key={item.id} className="msg msg--user">
-                    <div className="bubble-user">{item.text}</div>
-                  </li>
-                );
-              }
-              if (item.kind === 'answer') {
-                return (
-                  <li key={item.id} className="msg msg--answer">
-                    <AnswerCard
-                      answer={item.answer}
-                      api={api}
-                      busy={loading}
-                      onSuggestion={(question) => void send(question)}
-                      onConsentRequired={() => setGateOpen(true)}
-                    />
-                  </li>
-                );
-              }
-              return (
-                <li key={item.id} className="msg msg--error">
-                  <div className="notice notice--danger">
-                    <p className="notice-text">{item.message}</p>
-                    {item.retryText !== null ? (
-                      <button
-                        type="button"
-                        className="btn btn-small btn-secondary"
-                        disabled={loading}
-                        onClick={() => void send(item.retryText ?? '', item.id)}
-                      >
-                        Reintentar
-                      </button>
-                    ) : null}
-                  </div>
-                </li>
-              );
-            })}
-            {loading ? (
-              <li className="msg msg--answer" aria-busy="true">
-                <div className="answer answer--loading">
-                  <div className="skeleton" aria-hidden="true">
-                    <span className="skeleton-line w-40" />
-                    <span className="skeleton-line" />
-                    <span className="skeleton-line w-80" />
-                  </div>
-                  <p className="loading-text" role="status">
-                    <Spinner /> Buscando en las notas de El País…
-                  </p>
-                </div>
-              </li>
+          <div className="scroll-area" ref={scrollRef}>
+            <main className="main" ref={mainRef}>
+            {showHome ? (
+              <Home
+                cards={suggestionCards}
+                items={suggestionItems}
+                api={api}
+                onSend={(question) => void send(question)}
+              />
+            ) : (
+              <Conversation
+                items={items}
+                loading={loading}
+                api={api}
+                onSuggestion={(question) => void send(question)}
+                onConsentRequired={() => setGateOpen(true)}
+                onRetry={(text, id) => void send(text, id)}
+              />
+            )}
+            </main>
+          </div>
+
+          <div className="composer-wrap" ref={composerWrapRef}>
+            {showJumpToBottom ? (
+              <button type="button" className="jump-to-bottom" onClick={jumpToBottom}>
+                Ir al final ↓
+              </button>
             ) : null}
-          </ol>
-          <div ref={endRef} className="scroll-anchor" aria-hidden="true" />
-        </main>
-
-        <div className="composer-wrap">
-          <div className="composer-inner">
             {consentMissing ? (
               <div className="notice notice--warn consent-missing" role="status">
                 <p className="notice-text">Para preguntar tenés que elegir una opción.</p>
@@ -259,7 +348,6 @@ export function Chat({ api, me, consent, suggestions, onMeChange, onDeleted }: P
               onSend={(question) => void send(question)}
             />
           </div>
-          <Footer />
         </div>
       </div>
 
@@ -281,6 +369,22 @@ export function Chat({ api, me, consent, suggestions, onMeChange, onDeleted }: P
           onOpenGate={() => setGateOpen(true)}
           onChangeMode={changeMode}
           onDelete={deleteData}
+        />
+      ) : null}
+
+      {helpOpen ? <HelpModal onClose={() => setHelpOpen(false)} /> : null}
+
+      {historyOpen ? (
+        <HistoryModal
+          conversations={conversations}
+          activeId={activeId}
+          onSelect={(id) => {
+            selectConversation(id);
+            setHistoryOpen(false);
+          }}
+          onRemove={removeFromHistory}
+          onClearAll={clearAllHistory}
+          onClose={() => setHistoryOpen(false)}
         />
       ) : null}
     </>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ConfigResponse } from '@pelp/domain/api';
-import { effectiveIntensity, intensityLevel, type BiasReportRecord, type Config, type IncidentRecord, type IntensityLevel, type VerifierVerdict } from '@pelp/domain';
+import { effectiveIntensity, intensityLevel, type BiasReportRecord, type Config, type IncidentRecord, type IntensityLevel } from '@pelp/domain';
 import { useApi } from '../../shared/ApiContext';
 import { useAsync } from '../../shared/useAsync';
 import { HardMaxDialog, useConfigSaver, type ConfigSaveResult } from '../../shared/useConfigSaver';
@@ -15,6 +15,7 @@ import { ConfirmDialog } from '../../shared/components/ConfirmDialog';
 import { DaysSelector } from '../../shared/components/Tabs';
 import { Empty } from '../../shared/components/Empty';
 import { Notice, useNotice } from '../../shared/components/Notice';
+import { VerdictView } from '../../shared/components/Verdict';
 import { fmtDateTime, fmtDay, fmtInt, fmtNumber, fmtPercent, fmtUsd, truncate } from '../../shared/format';
 
 type Personalization = Config['personalization'];
@@ -103,40 +104,37 @@ function SliderField({
   );
 }
 
-function VerdictView({ verdict }: { verdict: VerifierVerdict }) {
-  return (
-    <div className="verdict">
-      <div className="chips-row">
-        <Chip tone={verdict.ok ? 'success' : 'danger'}>{verdict.ok ? 'aprobado' : 'rechazado'}</Chip>
-        <Chip tone={verdict.citationsEqual ? 'success' : 'danger'}>{verdict.citationsEqual ? 'mismas citas' : 'citas distintas'}</Chip>
-        <Chip tone={verdict.opinionDetected ? 'danger' : 'success'}>{verdict.opinionDetected ? 'opinión detectada' : 'sin opinión'}</Chip>
-      </div>
-      {verdict.missingFacts.length > 0 && (
-        <p>
-          <strong>Hechos omitidos:</strong> {verdict.missingFacts.join(' · ')}
-        </p>
-      )}
-      {verdict.newFacts.length > 0 && (
-        <p>
-          <strong>Hechos agregados:</strong> {verdict.newFacts.join(' · ')}
-        </p>
-      )}
-      {verdict.notes && <p className="muted">{verdict.notes}</p>}
-    </div>
-  );
-}
-
 function IncidentDetail({ incident }: { incident: IncidentRecord }) {
   return (
     <div className="detail detail--inline">
+      <section className="detail__ask">
+        {incident.questionMasked ? (
+          <p className="detail__question">{incident.questionMasked}</p>
+        ) : (
+          <p className="muted">La pregunta ya no está en el log: venció su retención.</p>
+        )}
+        <p className="muted small">
+          Mensaje <code>{incident.msgId}</code>
+          {incident.readerId && (
+            <>
+              {' · lector '}
+              <code>{incident.readerId}</code>
+            </>
+          )}
+        </p>
+      </section>
       <div className="split">
         <section>
-          <h4 className="h4">Canónica</h4>
+          <h4 className="h4">Canónica (la que vio el lector)</h4>
           <div className="answer">{incident.canonicalAnswer}</div>
         </section>
         <section>
-          <h4 className="h4">Adaptada (rechazada)</h4>
-          <div className="answer answer--rejected">{incident.adaptedAnswer}</div>
+          <h4 className="h4">Adaptada (descartada)</h4>
+          {incident.adaptedAnswer ? (
+            <div className="answer answer--rejected">{incident.adaptedAnswer}</div>
+          ) : (
+            <Empty text="Este incidente es anterior al 13/9/2026 y no guardó el texto de la adaptación; quedó solo el veredicto." />
+          )}
         </section>
       </div>
       <VerdictView verdict={incident.verdict} />
@@ -242,7 +240,16 @@ export default function PersonalizacionPage() {
 
   const incidentColumns: Column<IncidentRecord>[] = [
     { key: 'at', header: 'Fecha', nowrap: true, render: (row) => fmtDateTime(row.at) },
-    { key: 'msgId', header: 'Mensaje', render: (row) => <code>{truncate(row.msgId, 16)}</code> },
+    {
+      key: 'question',
+      header: 'Pregunta',
+      render: (row) =>
+        row.questionMasked ? (
+          <span title={row.questionMasked}>{truncate(row.questionMasked, 80)}</span>
+        ) : (
+          <code title={row.msgId}>{truncate(row.msgId, 16)}</code>
+        ),
+    },
     { key: 'reader', header: 'Lector', render: (row) => (row.readerId ? <code>{truncate(row.readerId, 12)}</code> : <span className="muted">—</span>) },
     {
       key: 'verdict',

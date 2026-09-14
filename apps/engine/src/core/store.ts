@@ -1,4 +1,5 @@
 import type {
+  Answer,
   AuditRecord,
   BiasReportRecord,
   BlockRecord,
@@ -26,7 +27,7 @@ import type {
   SyncRunRecord,
   TokenUsage,
 } from '@pelp/domain';
-import { GSI1, GSI2, keys, montevideoDay, splitSk, ulid, ulidTime } from '@pelp/domain';
+import { keys, montevideoDay, splitSk, ulid, ulidTime } from '@pelp/domain';
 import type { Db } from './db';
 
 const DAY = 86_400;
@@ -40,12 +41,50 @@ export function isoFromUlid(id: string): string {
   return new Date(ulidTime(id)).toISOString();
 }
 
+export interface InboundReceipt extends Key {
+  type: 'InboundReceipt';
+  state: 'processing' | 'processed' | 'published';
+  answer?: Answer;
+  expiresAt: number;
+}
+
+function inboundReceiptKey(channel: string, requestId: string): Key {
+  return { PK: `${keys.tenantPrefix}#INBOUND#${channel}`, SK: `REQUEST#${requestId}` };
+}
+
 /**
  * Operaciones de dominio sobre la tabla única `pelp-main` (sección 12).
  * Lo comparten el motor, la admin-api y los jobs.
  */
 export class Store {
   constructor(readonly db: Db) {}
+
+  /* ----------------------- Idempotencia de canales ---------------------- */
+
+  async getInboundReceipt(channel: string, requestId: string): Promise<InboundReceipt | undefined> {
+    return this.db.get<InboundReceipt>(inboundReceiptKey(channel, requestId));
+  }
+
+  async claimInbound(channel: string, requestId: string, now: Date): Promise<boolean> {
+    return this.db.put({
+      ...inboundReceiptKey(channel, requestId),
+      type: 'InboundReceipt',
+      state: 'processing',
+      expiresAt: ttlAfterSeconds(now, 7 * DAY),
+    } satisfies InboundReceipt, { ifNotExists: true });
+  }
+
+  async saveInboundResult(channel: string, requestId: string, answer: Answer): Promise<void> {
+    await this.db.update(inboundReceiptKey(channel, requestId), { set: { state: 'processed', answer }, mustExist: true });
+  }
+
+  async markInboundPublished(channel: string, requestId: string): Promise<void> {
+    await this.db.update(inboundReceiptKey(channel, requestId), { set: { state: 'published' }, mustExist: true });
+  }
+
+  async releaseInbound(channel: string, requestId: string): Promise<void> {
+    await this.db.delete(inboundReceiptKey(channel, requestId));
+  }
 
   /* ----------------------------- Config ----------------------------- */
 

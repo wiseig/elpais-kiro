@@ -1,9 +1,9 @@
 import type { BiasReportRecord, BiasSample, Config, ModelCall, QuestionLogRecord } from '@pelp/domain';
-import { montevideoDay } from '@pelp/domain';
+import { isDigestRequest, montevideoDay, normalizeQuestion } from '@pelp/domain';
 import { costUsd, parseJsonObject } from '@pelp/bedrock';
 import { buildBiasJudgeUserMessage, getPrompt } from '@pelp/prompts';
-import { SYNTHETIC_PROFILES } from '@pelp/testing';
-import { adaptAndVerify, logger, type EngineDeps } from '@pelp/engine/core';
+import { GOLDEN_SET, SYNTHETIC_PROFILES } from '@pelp/testing';
+import { adaptAndVerify, logger, type EngineDeps, type Store } from '@pelp/engine/core';
 import { runtime } from './lib/runtime';
 
 interface JudgeJson {
@@ -66,12 +66,36 @@ export async function evaluateSample(deps: EngineDeps, config: Config, log: Ques
   };
 }
 
+/** Preguntas de control: el set dorado del repo más los casos golden guardados. */
+async function controlKeys(store: Store): Promise<Set<string>> {
+  const keys = new Set<string>();
+  for (const item of GOLDEN_SET.cases) {
+    const key = normalizeQuestion(item.question);
+    if (key) keys.add(key);
+  }
+  const cases = await store.listEvalCases().catch(() => []);
+  for (const item of cases) {
+    if (item.source !== 'golden') continue;
+    const key = normalizeQuestion(item.question);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
 /** Reporte de sesgo nocturno (9.6) con auto-bajada de intensidad. */
-export async function runBiasReport(deps: EngineDeps, maxSamples = 30): Promise<BiasReportRecord> {
+export async function runBiasReport(deps: EngineDeps, maxSamples = 30, dryRun = false): Promise<BiasReportRecord> {
   const config = await deps.config.get();
   const now = deps.now();
   const day = montevideoDay(new Date(now.getTime() - 3 * 3600_000));
-  const logs = (await deps.store.listQuestionLogs(day, 500)).filter((log) => log.hadCoverage && !log.blocked && log.canonicalAnswer);
+  const control = await controlKeys(deps.store);
+  const logs = (await deps.store.listQuestionLogs(day, 500)).filter((log) => {
+    if (!log.hadCoverage || log.blocked || !log.canonicalAnswer) return false;
+    // Las corridas de control no son lectores, y un panorama del día es una lista de notas
+    // sueltas: adaptarlo al perfil obliga a dejar cosas afuera y eso cuenta como divergencia.
+    if (control.has(normalizeQuestion(log.questionMasked))) return false;
+    if (isDigestRequest(log.questionMasked)) return false;
+    return true;
+  });
   const sampled = logs.sort(() => Math.random() - 0.5).slice(0, maxSamples);
   const intensity = config.personalization.intensity > 0 ? Math.min(config.personalization.intensity, config.personalization.hardMax) : 0.5;
   const details: BiasSample[] = [];
@@ -83,20 +107,27 @@ export async function runBiasReport(deps: EngineDeps, maxSamples = 30): Promise<
   }
   const factDivergenceTotal = details.reduce((acc, sample) => acc + sample.factDivergence, 0);
   const opinionCount = details.filter((sample) => sample.opinionDetected).length;
-  const clean = factDivergenceTotal === 0 && opinionCount === 0;
+  // Se mide por proporción de muestras, no por total: con cero absoluto el reporte nunca daba
+  // limpio y bajaba la intensidad todas las noches.
+  const tolerance = config.personalization.biasTolerance;
+  const divergentSamples = details.filter((sample) => sample.factDivergence > 0).length;
+  const divergenceRate = details.length ? divergentSamples / details.length : 0;
+  const opinionRate = details.length ? opinionCount / details.length : 0;
+  const clean = divergenceRate <= tolerance.factDivergenceRate && opinionRate <= tolerance.opinionRate;
+  const enoughSamples = details.length >= tolerance.minSamples;
   const totalCost = Math.round(calls.reduce((acc, call) => acc + call.costUsd, 0) * 1e6) / 1e6;
   let autoLowered = false;
   let loweredTo: number | undefined;
-  if (!clean && config.personalization.enabled && config.personalization.intensity > 0) {
+  if (!clean && enoughSamples && !dryRun && config.personalization.enabled && config.personalization.intensity > 0) {
     loweredTo = config.personalization.lastCleanIntensity;
     await deps.store.putConfig(
       { ...config, personalization: { ...config.personalization, intensity: loweredTo, autoLowered: true } },
       'bias-report',
-      `auto-bajada: divergencia de hechos ${factDivergenceTotal}, opinión ${opinionCount}`,
+      `auto-bajada: ${divergentSamples}/${details.length} muestras con divergencia, ${opinionCount} con opinión`,
     );
     deps.config.invalidate();
     autoLowered = true;
-  } else if (clean && details.length > 0 && config.personalization.intensity > config.personalization.lastCleanIntensity) {
+  } else if (clean && !dryRun && enoughSamples && config.personalization.intensity > config.personalization.lastCleanIntensity) {
     await deps.store.putConfig({ ...config, personalization: { ...config.personalization, lastCleanIntensity: config.personalization.intensity } }, 'bias-report', 'reporte limpio');
     deps.config.invalidate();
   }
@@ -123,8 +154,11 @@ export async function runBiasReport(deps: EngineDeps, maxSamples = 30): Promise<
   return { ...report, PK: '', SK: '', type: 'BiasReport' };
 }
 
-export async function handler(): Promise<{ samples: number; clean: boolean }> {
+export async function handler(event?: { dryRun?: boolean }): Promise<{ samples: number; clean: boolean; dryRun: boolean }> {
   const { engine } = runtime();
-  const report = await runBiasReport(engine);
-  return { samples: report.samples, clean: report.clean };
+  // `dryRun` audita y guarda el reporte sin tocar la intensidad: sirve para medir un cambio de
+  // prompt sin apagarle la personalización a los lectores.
+  const dryRun = event?.dryRun === true;
+  const report = await runBiasReport(engine, 30, dryRun);
+  return { samples: report.samples, clean: report.clean, dryRun };
 }

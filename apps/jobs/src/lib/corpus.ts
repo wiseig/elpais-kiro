@@ -1,4 +1,5 @@
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import type { S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { BedrockAgentClient, GetIngestionJobCommand, StartIngestionJobCommand } from '@aws-sdk/client-bedrock-agent';
 import type { Config, CorpusIndexRecord } from '@pelp/domain';
 import { dayToEpoch, keys, topicFromSection } from '@pelp/domain';
@@ -19,6 +20,8 @@ export interface Article {
   feedDate?: string;
   author: string;
   keywords: string[];
+  /** Primera imagen de la nota (feed `imagenes[0]`, API `images[0]`). */
+  imageUrl?: string;
   origin: 'feed' | 'dailybrief-api' | 'backfill';
 }
 
@@ -56,6 +59,12 @@ export interface DailyBriefArticle {
   link?: string;
   category?: string;
   keywords?: string[];
+  images?: string[];
+}
+
+function firstHttpUrl(values: string[] | undefined): string | undefined {
+  const candidate = (values ?? []).find((value) => typeof value === 'string' && /^https?:\/\//i.test(value.trim()));
+  return candidate?.trim();
 }
 
 export function stripHtml(html: string): string {
@@ -99,6 +108,7 @@ export function articleFromFeedItem(item: FeedItem, feedDay: string): Article | 
     ...(item.fecha ? { feedDate: item.fecha } : {}),
     author: (item.autor ?? '').trim(),
     keywords: (item.keywords ?? []).filter((keyword) => typeof keyword === 'string' && keyword.trim()).map((keyword) => keyword.trim()),
+    ...(firstHttpUrl(item.imagenes) ? { imageUrl: firstHttpUrl(item.imagenes) } : {}),
     origin: 'feed',
   };
 }
@@ -120,6 +130,7 @@ export function articleFromDailyBrief(article: DailyBriefArticle, fallbackDay: s
     ...(article.feedDate ? { feedDate: article.feedDate } : {}),
     author: (article.source ?? '').trim(),
     keywords: (article.keywords ?? []).filter((keyword) => typeof keyword === 'string' && keyword.trim()),
+    ...(firstHttpUrl(article.images) ? { imageUrl: firstHttpUrl(article.images) } : {}),
     origin,
   };
 }
@@ -146,20 +157,38 @@ export function toMarkdown(article: Article): string {
   return lines.join('\n');
 }
 
-export function toMetadata(article: Article, hash: string): { metadataAttributes: Record<string, string | number> } {
-  return {
-    metadataAttributes: {
-      articleId: article.articleId,
-      title: article.title.slice(0, 200),
-      url: article.url.slice(0, 300),
-      section: article.section.slice(0, 60),
-      date: article.date,
-      dateEpoch: dayToEpoch(article.date),
-      author: article.author.slice(0, 80),
-      keywords: article.keywords.join(', ').slice(0, 200),
-      contentHash: hash,
-    },
+/** Tope de metadata filtrable por vector en S3 Vectors, con margen. */
+export const METADATA_BUDGET_BYTES = 900;
+
+/**
+ * Metadata que acompaña a cada nota en la Knowledge Base. S3 Vectors acepta ~1 KB de metadata
+ * filtrable por vector y descarta el documento en silencio si se pasa: el 13/9/2026 quedaron
+ * sin indexar 80 notas del día, todas con URL de imagen larga. Por eso viaja solo lo que la
+ * búsqueda necesita (filtro de fecha y datos de la fuente); la imagen, la bajada, el autor y
+ * las palabras clave se leen del índice del corpus en DynamoDB al armar la respuesta.
+ */
+export function toMetadata(article: Article): { metadataAttributes: Record<string, string | number> } {
+  // Bedrock rechaza atributos con string vacío ("invalid metadata attributes"): se omiten.
+  const attributes: Record<string, string | number> = {
+    articleId: article.articleId,
+    title: article.title.slice(0, 200),
+    url: article.url.slice(0, 300),
+    section: article.section.slice(0, 60),
+    date: article.date,
+    dateEpoch: dayToEpoch(article.date),
   };
+  // Red de seguridad: si un título o una URL extremos empujan el total, se recorta el título.
+  let size = metadataSize(attributes);
+  if (size > METADATA_BUDGET_BYTES) {
+    const exceso = size - METADATA_BUDGET_BYTES;
+    attributes.title = String(attributes.title).slice(0, Math.max(40, String(attributes.title).length - exceso));
+    size = metadataSize(attributes);
+  }
+  return { metadataAttributes: attributes };
+}
+
+export function metadataSize(attributes: Record<string, string | number>): number {
+  return Buffer.byteLength(JSON.stringify(attributes));
 }
 
 export function s3KeyFor(article: Article): string {
@@ -268,7 +297,7 @@ export async function upsertArticles(deps: CorpusDeps, articles: Article[]): Pro
       await markIngestionPending(deps.store, deps.now());
       await deps.s3.send(new PutObjectCommand({ Bucket: deps.bucket, Key: key, Body: toMarkdown(article), ContentType: 'text/markdown; charset=utf-8' }));
       await deps.s3.send(
-        new PutObjectCommand({ Bucket: deps.bucket, Key: `${key}.metadata.json`, Body: JSON.stringify(toMetadata(article, hash)), ContentType: 'application/json' }),
+        new PutObjectCommand({ Bucket: deps.bucket, Key: `${key}.metadata.json`, Body: JSON.stringify(toMetadata(article)), ContentType: 'application/json' }),
       );
       const record: Omit<CorpusIndexRecord, 'PK' | 'SK' | 'type'> = {
         articleId: article.articleId,
@@ -280,6 +309,8 @@ export async function upsertArticles(deps: CorpusDeps, articles: Article[]): Pro
         section: topicFromSection(article.section),
         origin: article.origin,
         updatedAt: deps.now().toISOString(),
+        ...(article.imageUrl ? { imageUrl: article.imageUrl } : {}),
+        ...(article.deck.trim() ? { deck: article.deck.trim().slice(0, 200) } : {}),
       };
       await deps.store.putCorpusIndex(record);
       indexCommitted = true;
@@ -318,6 +349,49 @@ export async function removeArticle(deps: CorpusDeps, articleId: string): Promis
   return existing;
 }
 
+export interface PruneOptions {
+  /** Se borra todo lo publicado en esta fecha o antes (YYYY-MM-DD, Montevideo). */
+  cutoffDay: string;
+  /** Tope por corrida para no pasarse del tiempo de Lambda. */
+  limit?: number;
+  /** Días que la ficha borrada queda como lápida en el índice antes de expirar sola. */
+  tombstoneDays?: number;
+}
+
+export interface PruneResult {
+  scanned: number;
+  removed: number;
+  /** true si quedaron notas viejas sin borrar por el tope de la corrida. */
+  more: boolean;
+}
+
+const DEFAULT_PRUNE_LIMIT = 500;
+const DEFAULT_TOMBSTONE_DAYS = 30;
+
+/**
+ * Borra del bucket y del índice las notas anteriores al corte de retención (ADR 0007). La
+ * ficha queda como lápida con TTL para no re-bajar la misma nota, y la ingestión posterior
+ * saca los vectores de la base de conocimiento.
+ */
+export async function pruneCorpus(deps: CorpusDeps, options: PruneOptions): Promise<PruneResult> {
+  const limit = options.limit ?? DEFAULT_PRUNE_LIMIT;
+  const tombstoneDays = options.tombstoneDays ?? DEFAULT_TOMBSTONE_DAYS;
+  const candidates = await deps.store.listCorpusByDate('1970-01-01', options.cutoffDay, limit + 1);
+  const stale = candidates.filter((record) => !record.removed);
+  const batch = stale.slice(0, limit);
+  const now = deps.now();
+  const expiresAt = Math.floor(now.getTime() / 1000) + tombstoneDays * 86_400;
+
+  for (const record of batch) {
+    await deps.s3.send(new DeleteObjectCommand({ Bucket: deps.bucket, Key: record.s3Key }));
+    await deps.s3.send(new DeleteObjectCommand({ Bucket: deps.bucket, Key: `${record.s3Key}.metadata.json` }));
+    await deps.store.putCorpusIndex({ ...record, removed: true, updatedAt: now.toISOString(), expiresAt });
+    await deps.store.incrementCorpusDay(record.date, -1);
+  }
+  if (batch.length) await markIngestionPending(deps.store, now);
+  return { scanned: candidates.length, removed: batch.length, more: stale.length > batch.length };
+}
+
 let agentClient: BedrockAgentClient | undefined;
 
 function bedrockClient(): BedrockAgentClient {
@@ -329,6 +403,40 @@ function ingestionIds(config: Config): { knowledgeBaseId: string; dataSourceId: 
   const knowledgeBaseId = config.corpus.knowledgeBaseId || process.env.KNOWLEDGE_BASE_ID;
   const dataSourceId = config.corpus.dataSourceId || process.env.DATA_SOURCE_ID;
   if (!knowledgeBaseId || !dataSourceId) throw new Error('Falta KNOWLEDGE_BASE_ID o DATA_SOURCE_ID para procesar la ingesta pendiente');
+  return { knowledgeBaseId, dataSourceId };
+}
+
+function isNotFound(error: unknown): boolean {
+  return (error as { name?: string })?.name === 'ResourceNotFoundException';
+}
+
+/**
+ * Los ids de la config mandan sobre las variables de entorno, así que si la Knowledge Base o
+ * el data source se recrean, la config vieja deja todas las ingestas fallando con
+ * `ResourceNotFoundException` hasta que alguien la edite a mano (pasó el 13/9/2026 al cambiar
+ * de data source). Cuando Bedrock dice que no existe, se vuelve a lo que despliega
+ * CloudFormation y se corrige la config sola.
+ */
+async function healIngestionIds(
+  store: Store,
+  ids: { knowledgeBaseId: string; dataSourceId: string },
+): Promise<{ knowledgeBaseId: string; dataSourceId: string } | undefined> {
+  const knowledgeBaseId = process.env.KNOWLEDGE_BASE_ID?.trim();
+  const dataSourceId = process.env.DATA_SOURCE_ID?.trim();
+  if (!knowledgeBaseId || !dataSourceId) return undefined;
+  if (knowledgeBaseId === ids.knowledgeBaseId && dataSourceId === ids.dataSourceId) return undefined;
+  await store.db.update(keys.config(), {
+    set: { 'config.corpus.knowledgeBaseId': knowledgeBaseId, 'config.corpus.dataSourceId': dataSourceId },
+    mustExist: true,
+  });
+  console.warn(
+    JSON.stringify({
+      level: 'warn',
+      message: 'corpus.ingestion_ids_healed',
+      anteriores: ids,
+      nuevos: { knowledgeBaseId, dataSourceId },
+    }),
+  );
   return { knowledgeBaseId, dataSourceId };
 }
 
@@ -345,8 +453,20 @@ export async function checkIngestion(
   if (!state.activeJobId) {
     return { status: 'idle', pending: state.generation > state.completedGeneration };
   }
-  const { knowledgeBaseId, dataSourceId } = ingestionIds(config);
-  const output = await client.send(new GetIngestionJobCommand({ knowledgeBaseId, dataSourceId, ingestionJobId: state.activeJobId }));
+  let ids = ingestionIds(config);
+  let output;
+  try {
+    output = await client.send(new GetIngestionJobCommand({ ...ids, ingestionJobId: state.activeJobId }));
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+    const healed = await healIngestionIds(store, ids);
+    if (!healed) throw error;
+    ids = healed;
+    // La ingestión activa era del recurso viejo: se descarta y queda pendiente para la próxima.
+    await store.db.update(INGESTION_STATE_KEY, { set: { lastStatus: 'STOPPED', lastCheckedAt: new Date().toISOString() }, remove: ['activeJobId', 'activeGeneration', 'activeStartedAt'] });
+    return { status: 'idle', pending: state.generation > state.completedGeneration };
+  }
+  const { knowledgeBaseId, dataSourceId } = ids;
   const status = output.ingestionJob?.status;
   const checkedAt = new Date().toISOString();
   if (!status) throw new Error(`Bedrock no devolvió estado para la ingestión ${state.activeJobId}`);
@@ -400,9 +520,18 @@ export async function startIngestion(
   }
   if (state.generation <= state.completedGeneration) return undefined;
 
-  const { knowledgeBaseId, dataSourceId } = ingestionIds(config);
+  let ids = ingestionIds(config);
   try {
-    const output = await client.send(new StartIngestionJobCommand({ knowledgeBaseId, dataSourceId, description: reason.slice(0, 200) }));
+    let output;
+    try {
+      output = await client.send(new StartIngestionJobCommand({ ...ids, description: reason.slice(0, 200) }));
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+      const healed = await healIngestionIds(store, ids);
+      if (!healed) throw error;
+      ids = healed;
+      output = await client.send(new StartIngestionJobCommand({ ...ids, description: reason.slice(0, 200) }));
+    }
     const jobId = output.ingestionJob?.ingestionJobId;
     if (!jobId) throw new Error('Bedrock aceptó StartIngestionJob sin devolver ingestionJobId');
     await store.db.update(INGESTION_STATE_KEY, {

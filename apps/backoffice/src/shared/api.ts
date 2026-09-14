@@ -5,6 +5,8 @@
  */
 import type {
   AdminOverview,
+  AlertHistoryResponse,
+  AlertsResponse,
   AuditResponse,
   BackfillRequest,
   BiasResponse,
@@ -20,8 +22,12 @@ import type {
   EvalCasesResponse,
   EvalRunsResponse,
   IncidentsResponse,
+  MailingListsResponse,
   PutConfigRequest,
+  JobRunsResponse,
+  JobsResponse,
   QuestionDetail,
+  UpdateJobRequest,
   QuestionListItem,
   QuestionsQuery,
   ReaderDetail,
@@ -30,6 +36,8 @@ import type {
   RollbackRequest,
   SendTrendingRequest,
   TrendingResponse,
+  UpdateAlertRequest,
+  UsersResponse,
 } from '@pelp/domain/api';
 import type { ChannelEntry, EvalCaseRecord } from '@pelp/domain';
 import { ApiError } from './errors';
@@ -50,7 +58,8 @@ export interface OkResponse {
 }
 
 export interface StartedResponse {
-  started: true;
+  started: boolean;
+  detail?: string;
 }
 
 export interface DeletedResponse {
@@ -156,6 +165,10 @@ export class Api {
     return this.request<T>('PUT', path, { body });
   }
 
+  private patch<T>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>('PATCH', path, { body });
+  }
+
   private delete<T>(path: string, body?: unknown): Promise<T> {
     return this.request<T>('DELETE', path, { body });
   }
@@ -190,7 +203,7 @@ export class Api {
 
   /* ------------------------------ Preguntas ------------------------------ */
 
-  questions(query: QuestionsQuery): Promise<ListResponse<QuestionListItem>> {
+  questions(query: QuestionsQuery): Promise<ListResponse<QuestionListItem> & { controlExcluded: number }> {
     return this.get('/questions', {
       day: query.day,
       days: query.days,
@@ -199,6 +212,7 @@ export class Api {
       personalized: query.personalized,
       q: query.q,
       limit: query.limit,
+      includeControl: query.includeControl,
     });
   }
 
@@ -208,6 +222,28 @@ export class Api {
 
   markEval(id: string): Promise<MarkEvalResponse> {
     return this.post(`/questions/${encodeURIComponent(id)}/mark-eval`);
+  }
+
+  unmarkEval(id: string): Promise<{ ok: true }> {
+    return this.delete(`/questions/${encodeURIComponent(id)}/mark-eval`);
+  }
+
+  /* ------------------------------- Trabajos ------------------------------ */
+
+  jobs(): Promise<JobsResponse> {
+    return this.get('/jobs');
+  }
+
+  updateJob(key: string, body: UpdateJobRequest): Promise<JobsResponse> {
+    return this.patch(`/jobs/${encodeURIComponent(key)}`, body);
+  }
+
+  runJob(key: string): Promise<{ started: boolean }> {
+    return this.post(`/jobs/${encodeURIComponent(key)}/run`);
+  }
+
+  jobRuns(key: string): Promise<JobRunsResponse> {
+    return this.get(`/jobs/${encodeURIComponent(key)}/runs`);
   }
 
   /* ------------------------------ Tendencias ----------------------------- */
@@ -300,6 +336,60 @@ export class Api {
 
   blocks(days: number): Promise<BlocksResponse> {
     return this.get('/guardrails/blocks', { days });
+  }
+
+  /* ------------------------------- Usuarios ------------------------------ */
+
+  users(): Promise<UsersResponse> {
+    return this.get('/users');
+  }
+
+  createUser(email: string): Promise<UsersResponse> {
+    return this.post('/users', { email });
+  }
+
+  resendInvite(username: string): Promise<UsersResponse> {
+    return this.post(`/users/${encodeURIComponent(username)}/resend`);
+  }
+
+  resetUserPassword(username: string): Promise<UsersResponse> {
+    return this.post(`/users/${encodeURIComponent(username)}/reset`);
+  }
+
+  setUserEnabled(username: string, enabled: boolean): Promise<UsersResponse> {
+    return this.patch(`/users/${encodeURIComponent(username)}`, { enabled });
+  }
+
+  deleteUser(username: string, reason?: string): Promise<UsersResponse> {
+    return this.delete(`/users/${encodeURIComponent(username)}`, reason ? { reason } : undefined);
+  }
+
+  /* -------------------------------- Alertas ------------------------------ */
+
+  alerts(): Promise<AlertsResponse> {
+    return this.get('/alerts');
+  }
+
+  updateAlert(key: string, body: UpdateAlertRequest): Promise<AlertsResponse> {
+    return this.patch(`/alerts/${encodeURIComponent(key)}`, body);
+  }
+
+  alertHistory(key: string): Promise<AlertHistoryResponse> {
+    return this.get(`/alerts/${encodeURIComponent(key)}/history`);
+  }
+
+  /* ----------------------------- Listas de correo ------------------------ */
+
+  mailingLists(): Promise<MailingListsResponse> {
+    return this.get('/mailing');
+  }
+
+  subscribeToList(key: string, email: string): Promise<MailingListsResponse> {
+    return this.post(`/mailing/${encodeURIComponent(key)}/subscriptions`, { email });
+  }
+
+  unsubscribeFromList(key: string, subscriptionArn: string, email: string): Promise<MailingListsResponse> {
+    return this.delete(`/mailing/${encodeURIComponent(key)}/subscriptions`, { subscriptionArn, email });
   }
 
   /* -------------------------------- Canales ------------------------------ */

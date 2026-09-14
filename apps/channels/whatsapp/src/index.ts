@@ -1,9 +1,10 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { APIGatewayProxyEvent, APIGatewayProxyResult, EventBridgeEvent } from 'aws-lambda';
 import { DynamoDBClient, GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import type { Answer, InboundMessage } from '@pelp/domain';
-import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, TENANT_ID } from '@pelp/domain';
+import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, CURRENT_CONSENT_TEXT_VERSION, TENANT_ID } from '@pelp/domain';
 import { hashChannelIdentity } from '@pelp/domain/node';
 import { answerToPlainText, type ChannelAdapter, type ChannelContext, type OutboundPayload } from '@pelp/channel-sdk';
 
@@ -30,7 +31,7 @@ interface WhatsAppMessage {
 export const MAX_WHATSAPP_CHARS = 1600;
 export const DEFAULT_IDENTITY_TTL_SECONDS = 30 * 24 * 60 * 60;
 
-export type WhatsAppAction = 'consent_personalize' | 'consent_neutral' | 'neutral' | 'personalize' | 'delete_data' | 'help';
+export type WhatsAppAction = 'consent_personalize' | 'consent_neutral' | 'neutral' | 'personalize' | 'delete_data' | 'help' | 'confirm_age_personalize';
 
 interface ParsedWhatsAppMessage {
   inbound: InboundMessage;
@@ -50,10 +51,47 @@ function normalizeCommand(text: string): WhatsAppAction | undefined {
 }
 
 function actionForMessage(message: WhatsAppMessage, text: string): WhatsAppAction | undefined {
-  const buttonId = message.interactive?.button_reply?.id;
-  if (buttonId === 'consent_personalize' || buttonId === 'consent_neutral') return buttonId;
+  const button = parseConsentButton(message.interactive?.button_reply?.id);
+  if (button) return button.action;
   return message.type === 'text' || message.text?.body !== undefined ? normalizeCommand(text) : undefined;
 }
+let hydrated = false;
+/** Secretos por ARN (Secrets Manager), nunca en variables de entorno en claro (sección 15). */
+async function hydrateEnvFromSecrets(map: Record<string, string>): Promise<void> {
+  if (hydrated) return;
+  hydrated = true;
+  const client = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
+  const read = async (arn: string | undefined): Promise<string | undefined> => {
+    if (!arn) return undefined;
+    const output = await client.send(new GetSecretValueCommand({ SecretId: arn }));
+    return output.SecretString;
+  };
+  const identity = await read(process.env.IDENTITY_SECRET_ARN);
+  if (identity && !process.env.PELP_IDENTITY_SECRET) {
+    try {
+      process.env.PELP_IDENTITY_SECRET = (JSON.parse(identity) as { secret?: string }).secret ?? identity;
+    } catch {
+      process.env.PELP_IDENTITY_SECRET = identity;
+    }
+  }
+  const channel = await read(process.env.CHANNEL_SECRET_ARN);
+  if (channel) {
+    const json = JSON.parse(channel) as Record<string, string | undefined>;
+    for (const [envName, key] of Object.entries(map)) {
+      const value = json[key];
+      if (!process.env[envName] && value && value !== 'PLACEHOLDER') process.env[envName] = value;
+    }
+  }
+}
+
+/** `consent_personalize:<textVersion>` → acción + versión del texto efectivamente mostrado. */
+function parseConsentButton(id: string | undefined): { action: 'consent_personalize' | 'consent_neutral' | 'confirm_age_personalize'; textVersion?: string } | undefined {
+  if (!id) return undefined;
+  const [base, version] = id.split(':');
+  if (base !== 'consent_personalize' && base !== 'consent_neutral' && base !== 'confirm_age_personalize') return undefined;
+  return { action: base, ...(version ? { textVersion: version } : {}) };
+}
+
 
 function rawBody(req: APIGatewayProxyEvent): Buffer | undefined {
   if (!req.body) return undefined;
@@ -143,6 +181,7 @@ export class WhatsAppAdapter implements ChannelAdapter<APIGatewayProxyEvent> {
                 messageId: message.id ?? '',
                 buttonId: message.interactive?.button_reply?.id ?? '',
                 ...(action ? { action } : {}),
+                ...(parseConsentButton(message.interactive?.button_reply?.id)?.textVersion ? { textVersion: parseConsentButton(message.interactive?.button_reply?.id)?.textVersion ?? '' } : {}),
               },
             },
           });
@@ -153,6 +192,18 @@ export class WhatsAppAdapter implements ChannelAdapter<APIGatewayProxyEvent> {
   }
 
   render(answer: Answer, _ctx: ChannelContext): OutboundPayload[] {
+    const ageGate = answer.blocks.find((block) => block.type === 'notice' && block.code === 'age_confirmation_required');
+    if (ageGate && ageGate.type === 'notice') {
+      const version = answer.consentTextVersion ?? CURRENT_CONSENT_TEXT_VERSION;
+      return [{
+        kind: 'buttons',
+        text: ageGate.text.slice(0, 1024),
+        buttons: [
+          { id: `confirm_age_personalize:${version}`, title: `Tengo ${answer.consentMinAge ?? 18} años o más` },
+          { id: `consent_neutral:${version}`, title: CONSENT_BUTTONS.neutral },
+        ],
+      }];
+    }
     const consent = answer.blocks.find((block) => block.type === 'notice' && block.code === 'consent_required');
     if (consent) {
       const termsUrl = process.env.TERMS_URL ?? 'https://www.elpais.com.uy/';
@@ -161,8 +212,8 @@ export class WhatsAppAdapter implements ChannelAdapter<APIGatewayProxyEvent> {
         kind: 'buttons',
         text: `${CURRENT_CONSENT_TEXT.slice(0, 1024 - suffix.length)}${suffix}`,
         buttons: [
-          { id: 'consent_personalize', title: CONSENT_BUTTONS.personalize },
-          { id: 'consent_neutral', title: CONSENT_BUTTONS.neutral },
+          { id: `consent_personalize:${answer.consentTextVersion ?? CURRENT_CONSENT_TEXT_VERSION}`, title: CONSENT_BUTTONS.personalize },
+          { id: `consent_neutral:${answer.consentTextVersion ?? CURRENT_CONSENT_TEXT_VERSION}`, title: CONSENT_BUTTONS.neutral },
         ],
       }];
     }
@@ -218,6 +269,7 @@ export function inboundQueueBody(inbound: InboundMessage): string {
 
 /** Webhook: GET de verificación de Meta y POST de mensajes → cola pelp-inbound. */
 export async function webhook(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+  await hydrateEnvFromSecrets({ WHATSAPP_APP_SECRET: 'appSecret', WHATSAPP_VERIFY_TOKEN: 'verifyToken', WHATSAPP_TOKEN: 'token', WHATSAPP_PHONE_ID: 'phoneNumberId' });
   if (event.httpMethod === 'GET') {
     const verifyToken = requiredEnv('WHATSAPP_VERIFY_TOKEN');
     if (!verifyToken) return { statusCode: 500, body: 'webhook not configured' };
@@ -254,6 +306,7 @@ export async function webhook(event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
 /** Entrega AnswerReady: resuelve el hash en la tabla privada; nunca acepta meta.to. */
 export async function deliverHandler(event: EventBridgeEvent<'AnswerReady', { answer: Answer; channelUserId: string; conversationId: string; meta?: Record<string, string> }>): Promise<void> {
+  await hydrateEnvFromSecrets({ WHATSAPP_APP_SECRET: 'appSecret', WHATSAPP_VERIFY_TOKEN: 'verifyToken', WHATSAPP_TOKEN: 'token', WHATSAPP_PHONE_ID: 'phoneNumberId' });
   const accessToken = requiredEnv('WHATSAPP_TOKEN');
   const phoneNumberId = requiredEnv('WHATSAPP_PHONE_ID');
   const tableName = identityTableName();

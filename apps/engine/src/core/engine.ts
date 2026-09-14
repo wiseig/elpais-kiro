@@ -5,17 +5,35 @@ import type {
   Config,
   ConversationRecord,
   ConversationTurn,
+  CorpusIndexRecord,
+  DigestSection,
   InboundMessage,
+  IntentWords,
   ModelCall,
   NoticeCode,
   ReaderRecord,
+  RetrievedChunk,
   SourceItem,
   VerifierVerdict,
 } from '@pelp/domain';
-import { CURRENT_CONSENT_TEXT, cleanQuestion, hourKey, montevideoDay, needsRewrite, normalizeQuestion, ulid } from '@pelp/domain';
+import {
+  CONSENT_TEXT_VERSIONS,
+  DEFAULT_INTENT_WORDS,
+  addDays,
+  cleanQuestion,
+  describeDay,
+  digestSection,
+  hourKey,
+  isDigestRequest,
+  montevideoDay,
+  needsRewrite,
+  normalizeQuestion,
+  ulid,
+  wordListRegex,
+} from '@pelp/domain';
 import { questionHash } from '@pelp/domain/node';
 import { costUsd, parseJsonObject } from '@pelp/bedrock';
-import { buildOffTopicUserMessage, buildRewriteUserMessage, getOffTopicPrompt, getPrompt } from '@pelp/prompts';
+import { buildOffTopicUserMessage, buildRewriteUserMessage, getDeniedTopicPrompt, getOffTopicPrompt, getPrompt } from '@pelp/prompts';
 import { budgetState, noteSpend } from './budget';
 import { generateCanonical, sumCost, sumUsage } from './canonical';
 import type { ConfigSource } from './config';
@@ -51,7 +69,6 @@ export const CANNED = {
     'Solo respondo preguntas sobre la actualidad publicada por El País. Probá, por ejemplo: «¿Qué pasó hoy en Uruguay?» o «¿Cómo cerró el dólar?».',
   rateLimited: 'Hiciste muchas preguntas en poco tiempo. Esperá unos minutos y volvé a intentar.',
   tooLong: (max: number) => `La pregunta no puede superar los ${max} caracteres.`,
-  consent: CURRENT_CONSENT_TEXT,
 } as const;
 
 interface Conversation extends ConversationRecord {
@@ -67,18 +84,93 @@ interface CanonicalView {
   cached: boolean;
   model: string;
   chunksText: string[];
+  /** Hay cobertura pero el resumen no pasó el verificador de sustento. */
+  unverified?: boolean;
+  /** El resumen descartado, para poder revisarlo desde el backoffice. */
+  unverifiedAnswer?: string;
 }
 
-function notice(conversationId: string, text: string, code: NoticeCode, httpStatus: number, startedAt: number, reader?: ReaderRecord): EngineResult {
+function notice(
+  conversationId: string,
+  text: string,
+  code: NoticeCode,
+  httpStatus: number,
+  startedAt: number,
+  reader?: ReaderRecord,
+  consentTextVersion?: string,
+  consentMinAge?: number,
+): EngineResult {
   const answer: Answer = {
     answerId: ulid(),
     conversationId,
     blocks: [{ type: 'notice', text, code }],
     hadCoverage: false,
     personalized: false,
+    ...(consentTextVersion ? { consentTextVersion } : {}),
+    ...(consentMinAge !== undefined ? { consentMinAge } : {}),
     latencyMs: Date.now() - startedAt,
   };
   return { answer, httpStatus, notice: code, ...(reader ? { reader } : {}) };
+}
+
+interface BlockedNoticeInput {
+  config: Config;
+  reader: ReaderRecord;
+  inbound: InboundMessage;
+  question: string;
+  kind: BlockKind;
+  text: string;
+  code: NoticeCode;
+  day: string;
+  startedAt: number;
+  calls: ModelCall[];
+}
+
+/**
+ * Aviso por bloqueo que además queda en el log de preguntas (con `blocked`), para que el lector
+ * pueda puntuarlo y el backoffice lo vea entre las preguntas del día.
+ */
+async function blockedNotice(deps: EngineDeps, input: BlockedNoticeInput): Promise<EngineResult> {
+  const now = deps.now();
+  const msgId = ulid(now.getTime());
+  const at = new Date(Date.parse(now.toISOString())).toISOString();
+  const personalizedMode = readerMode(input.reader) === 'personalized';
+  const latencyMs = Date.now() - input.startedAt;
+  await deps.store
+    .putQuestionLog({
+      msgId,
+      convId: input.inbound.conversationId ?? 'sin-conversacion',
+      ...(personalizedMode ? { readerId: input.reader.profile.readerId } : {}),
+      channel: input.inbound.channel,
+      day: input.day,
+      at,
+      questionMasked: input.question,
+      questionNormalized: normalizeQuestion(input.question),
+      qnormHash: questionHash(input.question),
+      hadCoverage: false,
+      personalized: false,
+      cached: false,
+      sources: [],
+      canonicalAnswer: input.text,
+      topics: [],
+      latencyMs,
+      usage: sumUsage(input.calls),
+      costUsd: sumCost(input.calls),
+      model: input.config.answering.model,
+      corpusVersion: input.config.corpus.version || 'initial',
+      blocked: input.kind,
+      turn: 0,
+    })
+    .catch((error: unknown) => deps.log.error('block.log_failed', { error: String(error) }));
+  const answer: Answer = {
+    answerId: msgId,
+    conversationId: input.inbound.conversationId ?? '',
+    blocks: [{ type: 'notice', text: input.text, code: input.code }],
+    hadCoverage: false,
+    personalized: false,
+    latencyMs,
+  };
+  return { answer, httpStatus: 200, notice: input.code, reader: input.reader };
 }
 
 async function recordBlock(deps: EngineDeps, channel: string, kind: BlockKind, sample: string, detail?: string): Promise<void> {
@@ -127,6 +219,8 @@ async function rewriteQuestion(deps: EngineDeps, config: Config, question: strin
 interface ClassifyOutcome {
   offTopic: boolean;
   deniedTopic?: string;
+  /** Cita textual de la pregunta con la que el clasificador justificó el tema vedado. */
+  evidence?: string;
   calls: ModelCall[];
 }
 
@@ -139,19 +233,117 @@ async function classify(deps: EngineDeps, config: Config, question: string): Pro
       modelId: model,
       system: getOffTopicPrompt(config.prompts.offTopic, config.guardrails.deniedTopics),
       userText: buildOffTopicUserMessage(question),
-      maxTokens: 150,
+      maxTokens: 220,
       temperature: 0,
       cacheSystem: true,
     });
     const call: ModelCall = { model, purpose: 'classifier', usage: result.usage, costUsd: costUsd(config.pricing, model, result.usage), latencyMs: result.latencyMs };
-    const parsed = parseJsonObject<{ offTopic?: unknown; confidence?: unknown; deniedTopic?: unknown }>(result.text);
+    const parsed = parseJsonObject<{ offTopic?: unknown; confidence?: unknown; deniedTopic?: unknown; evidence?: unknown }>(result.text);
     const confidence = typeof parsed?.confidence === 'number' ? parsed.confidence : 0;
     const offTopic = parsed?.offTopic === true && confidence >= classifier.threshold;
-    const deniedTopic = typeof parsed?.deniedTopic === 'string' && parsed.deniedTopic.trim() ? parsed.deniedTopic.trim() : undefined;
-    return { offTopic, ...(deniedTopic ? { deniedTopic } : {}), calls: [call] };
+    const candidate = matchDeniedTopic(parsed?.deniedTopic, config.guardrails.deniedTopics);
+    const evidence = typeof parsed?.evidence === 'string' ? parsed.evidence.trim().slice(0, 160) : undefined;
+    const calls = [call];
+    if (!candidate) return { offTopic, calls };
+
+    const confirmation = await confirmDeniedTopic(deps, config, question, candidate);
+    if (confirmation.call) calls.push(confirmation.call);
+    if (!confirmation.match) {
+      deps.log.warn('classifier.denied_topic_rejected', { topic: candidate, evidence: evidence ?? null });
+      return { offTopic, calls };
+    }
+    deps.log.info('classifier.denied_topic', { topic: candidate, evidence: evidence ?? null });
+    return { offTopic, deniedTopic: candidate, ...(evidence ? { evidence } : {}), calls };
   } catch (error) {
     deps.log.warn('classifier.failed', { error: String(error) });
     return { offTopic: false, calls: [] };
+  }
+}
+
+function normalizeForMatch(value: string): string {
+  return value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * Los lectores escriben temas sueltos ("Valentina Cancela", "Ataque Facultad Medicina"). Sin
+ * forma de pregunta, el modelo canónico contestaba "El País no publicó sobre esto" y el filtro
+ * de relevancia del guardrail puntuaba bajísimo. Se convierte en pregunta explícita para
+ * recuperar, responder y medir relevancia; el texto original se guarda en el log igual.
+ */
+export function asExplicitQuestion(text: string, words: IntentWords = DEFAULT_INTENT_WORDS): string {
+  const trimmed = text.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return trimmed;
+  if (trimmed.includes('?') || trimmed.includes('¿')) return trimmed;
+  // Un tema suelto son pocas palabras. Con el límite en 12 se envolvían pedidos enteros
+  // ("Haceme un resumen de las noticias del día de hoy" salía como "¿Qué publicó El País
+  // sobre haceme un resumen…?", que no significa nada y no recuperaba nada útil).
+  if (trimmed.split(' ').length > words.topicMaxWords) return trimmed;
+  if (wordListRegex(words.questionMarkers)?.test(normalizeForMatch(trimmed))) return trimmed;
+  return `¿Qué publicó El País sobre ${trimmed.replace(/[.;,]+$/, '')}?`;
+}
+
+/** Formas en que los modelos suelen decir "ninguno" en vez de devolver null. */
+const NO_TOPIC_SENTINELS = new Set([
+  'no', 'none', 'null', 'nil', 'na', 'n/a', 'ninguno', 'ninguna', 'nada', 'false', 'undefined', 'no aplica', 'sin tema', 'not applicable',
+]);
+
+function matchWords(value: string): string[] {
+  return value.split(/[^a-z0-9]+/).filter((word) => word.length >= 5);
+}
+
+/**
+ * El clasificador solo puede vedar temas de la lista configurada: si devuelve otra cosa
+ * (por ejemplo "receta") o un "ninguno" disfrazado, se ignora y la pregunta sigue el camino
+ * normal. Compara la frase completa o palabras enteras de al menos 5 letras, sin acentos.
+ */
+export function matchDeniedTopic(candidate: unknown, configured: readonly string[]): string | undefined {
+  if (typeof candidate !== 'string') return undefined;
+  const wanted = normalizeForMatch(candidate).replace(/\s+/g, ' ').trim();
+  if (wanted.length < 4 || NO_TOPIC_SENTINELS.has(wanted)) return undefined;
+  const wantedWords = new Set(matchWords(wanted));
+  for (const topic of configured) {
+    const normalizedTopic = normalizeForMatch(topic).replace(/\s+/g, ' ').trim();
+    if (!normalizedTopic) continue;
+    if (wanted === normalizedTopic || wanted.includes(normalizedTopic)) return topic;
+    if (matchWords(normalizedTopic).some((word) => wantedWords.has(word))) return topic;
+  }
+  return undefined;
+}
+
+/**
+ * Segunda pasada antes de vedar un tema: el clasificador de alcance propone y esta pregunta
+ * cerrada confirma. Nova Lite rellenaba `deniedTopic` con el primer tema de la lista ante
+ * cualquier pregunta rara (marcó "apuestas" en preguntas sobre ajedrez o sobre Apple), y la
+ * cita textual no alcanzaba porque copiaba cualquier fragmento. Si la confirmación falla, la
+ * pregunta sigue el camino normal: el guardrail de Bedrock es la capa base (ADR 0004).
+ */
+async function confirmDeniedTopic(
+  deps: EngineDeps,
+  config: Config,
+  question: string,
+  topic: string,
+): Promise<{ match: boolean; call?: ModelCall }> {
+  const model = config.guardrails.offTopicClassifier.model;
+  try {
+    const result = await deps.models.converse({
+      modelId: model,
+      system: getDeniedTopicPrompt(config.prompts.offTopic, topic),
+      userText: buildOffTopicUserMessage(question),
+      maxTokens: 120,
+      temperature: 0,
+    });
+    const call: ModelCall = {
+      model,
+      purpose: 'classifier',
+      usage: result.usage,
+      costUsd: costUsd(config.pricing, model, result.usage),
+      latencyMs: result.latencyMs,
+    };
+    const parsed = parseJsonObject<{ match?: unknown }>(result.text);
+    return { match: parsed?.match === true, call };
+  } catch (error) {
+    deps.log.warn('classifier.denied_topic_confirm_failed', { error: String(error), topic });
+    return { match: false };
   }
 }
 
@@ -169,6 +361,185 @@ async function recordCosts(deps: EngineDeps, calls: ModelCall[], day: string, ch
     await deps.store.addCost(day, model, usage, cost, channel).catch((error: unknown) => deps.log.error('cost.persist_failed', { error: String(error) }));
     noteSpend(day, cost);
   }
+}
+
+
+/**
+ * La Knowledge Base guarda solo lo que la búsqueda necesita: la foto y la bajada de cada nota
+ * salen del índice del corpus (S3 Vectors corta la metadata filtrable en ~1 KB y descartaba
+ * las notas con URL de imagen larga). Falla en silencio: sin foto, la fuente se ve igual.
+ */
+/** Opciones del panorama, tal como vienen de la configuración. */
+type DigestOptions = Config['intents']['digest'];
+
+/** Las listas de la configuración, con la forma que esperan los detectores del dominio. */
+function intentWords(config: Config): IntentWords {
+  const { intents } = config;
+  return {
+    questionMarkers: intents.questionMarkers,
+    topicMaxWords: intents.topicMaxWords,
+    digestWords: intents.digest.words,
+    digestToday: intents.digest.today,
+    digestStandalone: intents.digest.standalone,
+    digestMaxWords: intents.digest.maxWords,
+    digestSections: intents.digest.sections,
+  };
+}
+
+/** "opinion/la-clave" es sección "opinion" a efectos de agrupar. */
+function baseSection(section: string): string {
+  return section.split('/')[0] ?? section;
+}
+
+/**
+ * Una ronda por sección en orden editorial, así ninguna copa el panorama. El índice guarda las
+ * notas por fecha, no por hora, de modo que "las más nuevas" sería un recorte arbitrario.
+ */
+export function pickForDigest(records: CorpusIndexRecord[], options: DigestOptions): CorpusIndexRecord[] {
+  const { notes: limit, skipSections, sectionOrder } = options;
+  const skip = new Set(skipSections.map((section) => baseSection(section)));
+  const usable = records.filter((record) => !skip.has(baseSection(record.section)));
+  const pool = usable.length ? usable : records;
+  const bySection = new Map<string, CorpusIndexRecord[]>();
+  for (const record of pool) {
+    const key = baseSection(record.section);
+    const list = bySection.get(key);
+    if (list) list.push(record);
+    else bySection.set(key, [record]);
+  }
+  const sections = [...bySection.keys()].sort((a, b) => {
+    const rankA = sectionOrder.indexOf(a);
+    const rankB = sectionOrder.indexOf(b);
+    if (rankA !== rankB) return (rankA === -1 ? sectionOrder.length : rankA) - (rankB === -1 ? sectionOrder.length : rankB);
+    return a.localeCompare(b, 'es');
+  });
+
+  const picked: CorpusIndexRecord[] = [];
+  for (let round = 0; picked.length < limit; round += 1) {
+    let added = false;
+    for (const section of sections) {
+      const record = bySection.get(section)?.[round];
+      if (!record) continue;
+      picked.push(record);
+      added = true;
+      if (picked.length === limit) break;
+    }
+    if (!added) break;
+  }
+  return picked;
+}
+
+/** "informacion/judiciales" entra por el prefijo "informacion/judiciales" y por "informacion". */
+function inSection(record: CorpusIndexRecord, section: DigestSection): boolean {
+  return section.match.some((prefix) => record.section === prefix || record.section.startsWith(`${prefix}/`));
+}
+
+/**
+ * Fragmentos para un pedido de panorama: las notas que El País publicó hoy, sacadas del índice
+ * por fecha. Si todavía no hay nada de hoy (madrugada), se cae al día anterior y el aviso lo
+ * dice, para que la respuesta no fecha mal lo que cuenta.
+ *
+ * Cuando el pedido nombra una sección ("resumen de judiciales") se toman solo sus notas y se
+ * mira más atrás: una sección chica puede no publicar nada en el día y contestar "no hay nada"
+ * sería falso.
+ */
+async function digestForDay(deps: EngineDeps, day: string, options: DigestOptions, section?: DigestSection): Promise<{ chunks: RetrievedChunk[]; notice: string } | undefined> {
+  const fromIndex = async (from: string, to: string) =>
+    (await deps.store.listCorpusByDate(from, to, section ? 500 : 200).catch((error: unknown) => {
+      deps.log.warn('digest.index_failed', { error: String(error) });
+      return [] as CorpusIndexRecord[];
+    })).filter((record) => !record.removed);
+
+  if (section) return digestForSection(deps, day, options, section, fromIndex);
+
+  let target = day;
+  let records = await fromIndex(target, target);
+  if (!records.length) {
+    target = addDays(day, -1);
+    records = await fromIndex(target, target);
+  }
+  if (!records.length) return undefined;
+
+  const chunks = digestChunks(pickForDigest(records, options));
+  const notice =
+    target === day
+      ? `El lector pide el panorama del día. Los fragmentos son ${chunks.length} de las ${records.length} notas que El País publicó el ${describeDay(day)}, una selección por sección.`
+      : `El lector pide el panorama del día. Hoy es ${describeDay(day)} y todavía no hay notas publicadas, así que los fragmentos son ${chunks.length} del ${describeDay(target)}. Decilo en la respuesta.`;
+  return { chunks, notice };
+}
+
+/** Las notas del índice como fragmentos, en el orden en que se las va a citar. */
+function digestChunks(records: CorpusIndexRecord[]): RetrievedChunk[] {
+  return records.map((record, position) => ({
+    // Sin cuerpo en el índice: el título y la bajada alcanzan para un panorama y son lo que
+    // el guardrail va a usar para medir sustento.
+    text: record.deck ? `${record.title}. ${record.deck}` : record.title,
+    score: 1,
+    articleId: record.articleId,
+    title: record.title,
+    url: record.url,
+    date: record.date,
+    dateEpoch: Date.parse(`${record.date}T12:00:00-03:00`) || 0,
+    section: record.section,
+    ...(record.imageUrl ? { imageUrl: record.imageUrl } : {}),
+    ...(record.deck ? { deck: record.deck } : {}),
+    index: position + 1,
+  }));
+}
+
+/**
+ * Panorama de una sección. La lista negra de secciones no se aplica: si el lector pidió
+ * Espectáculos, quiere Espectáculos. Las más nuevas primero, y el aviso dice desde cuándo son
+ * para que la respuesta no presente como de hoy una nota de hace tres días.
+ */
+async function digestForSection(
+  deps: EngineDeps,
+  day: string,
+  options: DigestOptions,
+  section: DigestSection,
+  fromIndex: (from: string, to: string) => Promise<CorpusIndexRecord[]>,
+): Promise<{ chunks: RetrievedChunk[]; notice: string } | undefined> {
+  const since = addDays(day, -(options.sectionDays - 1));
+  const records = (await fromIndex(since, day))
+    .filter((record) => inSection(record, section))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  if (!records.length) return undefined;
+
+  const name = section.names[0] ?? '';
+  const picked = records.slice(0, options.notes);
+  const chunks = digestChunks(picked);
+  const oldest = picked[picked.length - 1]?.date ?? day;
+  const newest = picked[0]?.date ?? day;
+  const when =
+    newest === day
+      ? `publicadas el ${describeDay(day)}${oldest === newest ? '' : ` y días anteriores, la más vieja del ${describeDay(oldest)}`}`
+      : `publicadas entre el ${describeDay(oldest)} y el ${describeDay(newest)}: hoy es ${describeDay(day)} y la sección no tiene notas de hoy`;
+  return {
+    chunks,
+    notice: `El lector pide el panorama de la sección ${name} de El País. Los fragmentos son ${chunks.length} de las ${records.length} notas de esa sección, ${when}. Decí de cuándo son las notas y no las presentes como del día si no lo son.`,
+  };
+}
+
+async function withCorpusExtras(deps: EngineDeps, sources: SourceItem[], chunks: RetrievedChunk[]): Promise<SourceItem[]> {
+  if (!sources.length) return sources;
+  const articleIdByUrl = new Map(chunks.map((chunk) => [chunk.url, chunk.articleId]));
+  return Promise.all(
+    sources.map(async (source) => {
+      if (source.imageUrl && source.deck) return source;
+      const articleId = articleIdByUrl.get(source.url);
+      if (!articleId) return source;
+      const record = await deps.store.getCorpusIndex(articleId).catch((error: unknown) => {
+        deps.log.warn('corpus.extras_failed', { error: String(error) });
+        return undefined;
+      });
+      if (!record) return source;
+      return {
+        ...source,
+        ...(!source.imageUrl && record.imageUrl ? { imageUrl: record.imageUrl } : {}),
+        ...(!source.deck && record.deck ? { deck: record.deck } : {}),
+      };
+    }),
+  );
 }
 
 /**
@@ -196,7 +567,18 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
 
   const reader = await resolveReader(deps.store, channel, inbound.channelUserId, now, config);
   if (needsConsent(reader, config)) {
-    return notice(conversationIdHint, CANNED.consent, 'consent_required', 200, startedAt, reader);
+    const consentText = CONSENT_TEXT_VERSIONS[config.consent.textVersion];
+    if (!consentText) throw new Error(`Versión de consentimiento no desplegada: ${config.consent.textVersion}`);
+    return notice(
+      conversationIdHint,
+      consentText,
+      'consent_required',
+      200,
+      startedAt,
+      reader,
+      config.consent.textVersion,
+      config.consent.minAgePersonalization,
+    );
   }
 
   const count = await deps.store.incrementRateLimit(reader.profile.readerId, hourKey(now), now);
@@ -206,6 +588,7 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
   }
 
   const budget = await budgetState(deps.store, config, day);
+  deps.log.metric('BudgetPercent', Math.round(budget.percent * 10) / 10, 'None');
   if (budget.paused) {
     await recordBlock(deps, channel, 'budget_paused', '');
     deps.log.metric('BudgetPercent', budget.percent, 'None');
@@ -218,7 +601,7 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
     const check = await deps.guard.checkInput(guardrail, question);
     if (check.action === 'block') {
       await recordBlock(deps, channel, check.kinds[0] ?? 'content', question, check.detail);
-      return notice(conversationIdHint, CANNED.blocked, 'blocked', 200, startedAt, reader);
+      return blockedNotice(deps, { config, reader, inbound, question, kind: check.kinds[0] ?? 'content', text: CANNED.blocked, code: 'blocked', day, startedAt, calls: [] });
     }
     masked = check.text;
   } catch (error) {
@@ -228,28 +611,42 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
   const blockedWord = blockedWordHit(masked, config.guardrails.blockedWords);
   if (blockedWord) {
     await recordBlock(deps, channel, 'blocked_word', masked, blockedWord);
-    return notice(conversationIdHint, CANNED.blocked, 'blocked', 200, startedAt, reader);
+    return blockedNotice(deps, { config, reader, inbound, question: masked, kind: 'blocked_word', text: CANNED.blocked, code: 'blocked', day, startedAt, calls: [] });
   }
 
+  // Los temas sueltos se convierten en pregunta antes de clasificar: el clasificador marcaba
+  // "FMED" o "Valentina Cancela" como fuera de alcance por no tener forma de pregunta.
+  const intents = intentWords(config);
+  const scoped = asExplicitQuestion(masked, intents);
+
   const calls: ModelCall[] = [];
-  const classification = await classify(deps, config, masked);
+  const classification = await classify(deps, config, scoped);
   calls.push(...classification.calls);
   if (classification.deniedTopic) {
-    await recordBlock(deps, channel, 'denied_topic', masked, classification.deniedTopic);
+    await recordBlock(deps, channel, 'denied_topic', masked, `${classification.deniedTopic} · evidencia: "${classification.evidence ?? ''}"`);
     await recordCosts(deps, calls, day, channel);
-    return notice(conversationIdHint, CANNED.blocked, 'blocked', 200, startedAt, reader);
+    return blockedNotice(deps, { config, reader, inbound, question: masked, kind: 'denied_topic', text: CANNED.blocked, code: 'blocked', day, startedAt, calls });
   }
   if (classification.offTopic) {
     await recordBlock(deps, channel, 'off_topic', masked);
     await recordCosts(deps, calls, day, channel);
-    return notice(conversationIdHint, CANNED.offTopic, 'off_topic', 200, startedAt, reader);
+    return blockedNotice(deps, { config, reader, inbound, question: masked, kind: 'off_topic', text: CANNED.offTopic, code: 'off_topic', day, startedAt, calls });
   }
 
   const conversation = await loadConversation(deps, reader, inbound, now);
   const turns = (conversation.turnsData ?? []).slice(-config.answering.memoryTurns * 2);
-  const rewrite = await rewriteQuestion(deps, config, masked, turns);
+  const rewrite = await rewriteQuestion(deps, config, scoped, turns);
   calls.push(...rewrite.calls);
-  const standalone = rewrite.question;
+  // La intención se mide sobre lo que escribió el lector, no sobre el texto ya envuelto: con
+  // "titulares" el envoltorio sumaba "qué publicó El País sobre…" y la frase dejaba de entrar
+  // por corta. Se mira también la reescritura, por si el panorama aparece en una repregunta.
+  const wantsDigest = isDigestRequest(masked, intents) || isDigestRequest(rewrite.question, intents);
+  // "Resumen de judiciales" pide una sección entera, no un tema: se arma con sus notas en vez
+  // de mandar el nombre de la sección al índice vectorial, que traía cualquier cosa.
+  const section = digestSection(masked, intents) ?? digestSection(rewrite.question, intents);
+  // Y con el panorama la pregunta viaja sin envolver: preguntarle al modelo "¿qué publicó El
+  // País sobre Portada?" lo hacía arrancar con "no publicó sobre Portada" antes del resumen.
+  const standalone = wantsDigest ? cleanQuestion(masked) : asExplicitQuestion(rewrite.question, intents);
 
   const qHash = questionHash(standalone);
   const corpusVersion = config.corpus.version || 'initial';
@@ -260,26 +657,35 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
     void deps.store.bumpCacheHit(qHash, corpusVersion);
     deps.log.metric('CacheHit', 1);
   } else {
+    const digest = wantsDigest ? await digestForDay(deps, day, config.intents.digest, section) : undefined;
+    if (digest) deps.log.info('canonical.digest', { notes: digest.chunks.length, section: section?.names[0] ?? null });
     const generated = await generateCanonical(
       { models: deps.models, retriever: deps.retriever, guard: deps.guard, log: deps.log },
-      { question: standalone, today: day, model: budget.model, config, now },
+      { question: standalone, today: day, model: budget.model, config, now, ...(digest ? { digest } : {}) },
     );
     calls.push(...generated.calls);
+    const sources = await withCorpusExtras(deps, generated.sources, generated.chunks);
     canonical = {
       answer: generated.answer,
       hadCoverage: generated.hadCoverage,
-      sources: generated.sources,
+      sources,
       cached: false,
       model: budget.model,
       chunksText: generated.chunks.map((chunk) => chunk.text),
+      ...(generated.unverified ? { unverified: true } : {}),
+      ...(generated.unverifiedAnswer ? { unverifiedAnswer: generated.unverifiedAnswer } : {}),
       ...(generated.groundingScore !== undefined ? { groundingScore: generated.groundingScore } : {}),
       ...(generated.relevanceScore !== undefined ? { relevanceScore: generated.relevanceScore } : {}),
     };
     deps.log.metric('CacheHit', 0);
     if (generated.groundingFailed) deps.log.metric('GroundingRetried', 1);
-    await deps.store
-      .putCache(qHash, corpusVersion, { answer: generated.answer, hadCoverage: generated.hadCoverage, sources: generated.sources, usedChunks: generated.usedChunks, model: budget.model, createdAt: now.toISOString(), ...(generated.groundingScore !== undefined ? { groundingScore: generated.groundingScore } : {}), ...(generated.relevanceScore !== undefined ? { relevanceScore: generated.relevanceScore } : {}) }, config.answering.cacheTtlMinutes, now)
-      .catch((error: unknown) => deps.log.error('cache.persist_failed', { error: String(error) }));
+    // Un pie sin verificar no se cachea: el intento siguiente puede salir bien y nadie querría
+    // quedarse una hora con "no pude armar un resumen".
+    if (!generated.unverified) {
+      await deps.store
+        .putCache(qHash, corpusVersion, { answer: generated.answer, hadCoverage: generated.hadCoverage, sources, usedChunks: generated.usedChunks, model: budget.model, createdAt: now.toISOString(), ...(generated.groundingScore !== undefined ? { groundingScore: generated.groundingScore } : {}), ...(generated.relevanceScore !== undefined ? { relevanceScore: generated.relevanceScore } : {}) }, config.answering.cacheTtlMinutes, now)
+        .catch((error: unknown) => deps.log.error('cache.persist_failed', { error: String(error) }));
+    }
   }
 
   const msgId = ulid(now.getTime());
@@ -290,7 +696,8 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
   let adaptedSuggestions: string[] = [];
   let verifierVerdict: VerifierVerdict | undefined;
 
-  const eligibility = evaluateEligibility(config, reader, channel, canonical.hadCoverage, now);
+  // Adaptar "no pude verificar el resumen" al perfil del lector no tiene sentido.
+  const eligibility = evaluateEligibility(config, reader, channel, canonical.hadCoverage && !canonical.unverified, now);
   if (eligibility.eligible && eligibility.profile) {
     const outcome = await adaptAndVerify(deps.models, deps.log, {
       question: standalone,
@@ -310,7 +717,7 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
     } else if (outcome.rejectedReason === 'verificador' && outcome.verdict) {
       deps.log.metric('PersonalizationRejected', 1);
       await deps.store
-        .putIncident({ id: ulid(now.getTime()), at: now.toISOString(), kind: 'PersonalizationRejected', readerId: reader.profile.readerId, msgId, canonicalAnswer: canonical.answer, adaptedAnswer: '', verdict: outcome.verdict })
+        .putIncident({ id: ulid(now.getTime()), at: now.toISOString(), kind: 'PersonalizationRejected', readerId: reader.profile.readerId, msgId, questionMasked: masked, canonicalAnswer: canonical.answer, adaptedAnswer: outcome.candidate ?? '', verdict: outcome.verdict })
         .catch((error: unknown) => deps.log.error('incident.persist_failed', { error: String(error) }));
     }
   }
@@ -457,6 +864,7 @@ async function persist(deps: EngineDeps, input: PersistInput): Promise<void> {
       cached: input.canonical.cached,
       sources: input.canonical.sources,
       canonicalAnswer: input.canonical.answer,
+      ...(input.canonical.unverifiedAnswer ? { unverifiedAnswer: input.canonical.unverifiedAnswer } : {}),
       topics,
       latencyMs: input.latencyMs,
       usage: sumUsage(input.calls),

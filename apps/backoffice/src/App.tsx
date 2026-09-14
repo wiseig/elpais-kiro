@@ -19,6 +19,11 @@ import GuardrailsPage from './modules/guardrails/Page';
 import CanalesPage from './modules/canales/Page';
 import CostosPage from './modules/costos/Page';
 import AuditoriaPage from './modules/auditoria/Page';
+import CuentaPage from './modules/cuenta/Page';
+import TrabajosPage from './modules/trabajos/Page';
+import UsuariosPage from './modules/usuarios/Page';
+import NotificacionesPage from './modules/notificaciones/Page';
+import AlertasPage from './modules/alertas/Page';
 
 function Shell() {
   const { status, user, runtime, logout } = useAuth();
@@ -42,6 +47,11 @@ function Shell() {
           <Route path="/canales" element={<CanalesPage />} />
           <Route path="/costos" element={<CostosPage />} />
           <Route path="/auditoria" element={<AuditoriaPage />} />
+          <Route path="/trabajos" element={<TrabajosPage />} />
+          <Route path="/alertas" element={<AlertasPage />} />
+          <Route path="/notificaciones" element={<NotificacionesPage />} />
+          <Route path="/usuarios" element={<UsuariosPage />} />
+          <Route path="/cuenta" element={<CuentaPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

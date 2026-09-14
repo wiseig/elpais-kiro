@@ -50,6 +50,8 @@ export interface ConsentRecord extends BaseRecord {
   uaHash?: string;
   ipPrefixHash?: string;
   ageConfirmed?: boolean;
+  /** Umbral que la persona declaró cumplir al personalizar. */
+  ageThreshold?: number;
   /** Lápida anónima tras el borrado: sin readerId ni evidencia. */
   tombstone?: boolean;
 }
@@ -113,6 +115,8 @@ export interface QuestionLogRecord extends BaseRecord {
   cached: boolean;
   sources: SourceItem[];
   canonicalAnswer: string;
+  /** Resumen que el verificador de sustento descartó, para poder auditar por qué falló. */
+  unverifiedAnswer?: string;
   topics: string[];
   latencyMs: number;
   usage: TokenUsage;
@@ -124,6 +128,8 @@ export interface QuestionLogRecord extends BaseRecord {
   blocked?: string;
   feedback?: { vote: 'up' | 'down'; comment?: string; at: string };
   evalMarked?: boolean;
+  /** Caso del set de evaluación creado desde el backoffice, para poder sacarlo. */
+  evalCaseId?: string;
   /** Turno dentro de la conversación (1 = primera pregunta). */
   turn: number;
 }
@@ -153,6 +159,8 @@ export interface CorpusIndexRecord extends BaseRecord {
   origin: 'feed' | 'dailybrief-api' | 'backfill';
   updatedAt: string;
   removed?: boolean;
+  imageUrl?: string;
+  deck?: string;
 }
 
 export interface CorpusDayRecord extends BaseRecord {
@@ -163,7 +171,7 @@ export interface CorpusDayRecord extends BaseRecord {
 
 export interface SyncRunRecord extends BaseRecord {
   type: 'SyncRun';
-  job: 'sync-feed' | 'reconcile-api' | 'backfill';
+  job: 'sync-feed' | 'reconcile-api' | 'backfill' | 'prune-corpus';
   startedAt: string;
   finishedAt?: string;
   status: 'running' | 'ok' | 'failed';
@@ -221,7 +229,10 @@ export interface IncidentRecord extends BaseRecord {
   kind: 'PersonalizationRejected';
   readerId?: string;
   msgId: string;
+  /** Pregunta enmascarada, para que el incidente se pueda leer sin ir a buscar el mensaje. */
+  questionMasked?: string;
   canonicalAnswer: string;
+  /** La adaptación que el verificador rechazó. Vacía en incidentes anteriores a que se guardara. */
   adaptedAnswer: string;
   verdict: VerifierVerdict;
 }
@@ -241,6 +252,8 @@ export interface EvalCaseRecord extends BaseRecord {
   question: string;
   /** Títulos o URLs esperados entre las fuentes. Vacío cuando se espera "sin cobertura". */
   expectedUrls: string[];
+  /** Para preguntas del día: expresión regular que alcanza con que cumpla una fuente. */
+  expectedUrlPattern?: string;
   expectedCoverage: boolean;
   /** Frases que deben aparecer en la respuesta (opcional). */
   mustMention: string[];
@@ -348,6 +361,17 @@ export interface ClickRecord extends BaseRecord {
   url: string;
   title?: string;
   section?: string;
+}
+
+export interface PreviewRecord extends BaseRecord {
+  type: 'Preview';
+  url: string;
+  title?: string;
+  description?: string;
+  imageUrl?: string;
+  siteName?: string;
+  fetchedAt: string;
+  ok: boolean;
 }
 
 export interface ChannelEntry {

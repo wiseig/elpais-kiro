@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { InboundMessage, QuestionLogRecord } from '@pelp/domain';
-import { NO_COVERAGE_MESSAGE, TENANT_ID } from '@pelp/domain';
+import type { CorpusIndexRecord, InboundMessage, IncidentRecord, QuestionLogRecord } from '@pelp/domain';
+import { DEFAULT_INTENT_WORDS, NO_COVERAGE_MESSAGE, TENANT_ID, UNVERIFIED_MESSAGE } from '@pelp/domain';
 import { hashChannelIdentity } from '@pelp/domain/node';
-import { askQuestion } from '../src/core/engine';
+import { askQuestion, asExplicitQuestion, matchDeniedTopic, pickForDigest } from '../src/core/engine';
+import { normalizeAdaptation } from '../src/core/personalization';
 import { recordDecision, resolveReader } from '../src/core/readers';
 import { resetBudgetCache } from '../src/core/budget';
-import { resetSuggestionsCache } from '../src/core/suggestions';
+import { resetSuggestionsCache, suggestions } from '../src/core/suggestions';
 import { SECRET, buildDeps, chunk, fakeGuard, fakeModels, fakeRetriever, testConfig } from './fakes';
 
 const hash = hashChannelIdentity(SECRET, 'web', 'sid-1');
@@ -97,6 +98,10 @@ describe('puerta de entrada y límites', () => {
     expect(result.notice).toBe('blocked');
     expect(models.calls).toHaveLength(0);
     expect((await store.listBlocks('2026-09-11'))[0]?.kind).toBe('prompt_attack');
+    const log = await store.getQuestionLog(result.answer.answerId);
+    expect(log?.blocked).toBe('prompt_attack');
+    expect(log?.hadCoverage).toBe(false);
+    expect(log?.readerId).toBeUndefined();
   });
 
   it('enmascara PII antes de persistir', async () => {
@@ -107,6 +112,44 @@ describe('puerta de entrada y límites', () => {
     const logs = await store.listQuestionLogs('2026-09-11');
     expect(logs[0]?.questionMasked).toContain('{PHONE}');
     expect(logs[0]?.questionMasked).not.toContain('099123456');
+  });
+
+  it('ignora temas vedados inventados por el clasificador y usa fuera de alcance', async () => {
+    const models = fakeModels({ offTopicJson: () => JSON.stringify({ offTopic: true, confidence: 0.9, deniedTopic: 'receta de cocina' }) });
+    const { deps } = buildDeps({ models });
+    await consented(deps);
+    const result = await askQuestion(deps, inbound('Dame una receta de torta de chocolate'));
+    expect(result.notice).toBe('off_topic');
+    const denied = fakeModels({
+      offTopicJson: () => JSON.stringify({ offTopic: false, confidence: 0.9, deniedTopic: 'apuestas deportivas', evidence: 'le apuesto' }),
+      deniedConfirmJson: () => JSON.stringify({ match: true, reason: 'pide cuotas de apuestas' }),
+    });
+    const second = buildDeps({ models: denied });
+    await consented(second.deps);
+    const blocked = await askQuestion(second.deps, inbound('¿A qué le apuesto en el clásico?'));
+    expect(blocked.notice).toBe('blocked');
+  });
+
+  it('no veda el tema si la segunda pasada no lo confirma', async () => {
+    // Nova Lite marcaba "apuestas" en preguntas sobre ajedrez o sobre Apple y citaba cualquier fragmento.
+    const models = fakeModels({
+      offTopicJson: () => JSON.stringify({ offTopic: false, confidence: 0.9, deniedTopic: 'apuestas', evidence: 'torneo nacional' }),
+      deniedConfirmJson: () => JSON.stringify({ match: false, reason: 'es una pregunta deportiva' }),
+    });
+    const { deps, store } = buildDeps({ models });
+    await consented(deps);
+    const result = await askQuestion(deps, inbound('¿Qué dijo la Federación de Ajedrez sobre el torneo nacional?'));
+    expect(result.notice).toBeUndefined();
+    expect(result.answer.blocks[0]?.type).toBe('text');
+    expect(await store.listBlocks('2026-09-11')).toHaveLength(0);
+    expect(models.calls.filter((call) => call.system.startsWith('Decidís si una pregunta'))).toHaveLength(1);
+  });
+
+  it('no confirma temas vedados cuando el clasificador no propone ninguno', async () => {
+    const { deps, models } = buildDeps();
+    await consented(deps);
+    await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó?'));
+    expect(models.calls.filter((call) => call.system.startsWith('Decidís si una pregunta'))).toHaveLength(0);
   });
 
   it('deriva fuera de alcance al clasificador', async () => {
@@ -158,12 +201,13 @@ describe('canónica', () => {
     expect(models.calls.some((c) => c.system.startsWith('Actuás como editor'))).toBe(false);
   });
 
-  it('reintenta estricto tras fallar grounding y cae a sin cobertura si vuelve a fallar', async () => {
+  it('reintenta estricto tras fallar grounding y entrega las notas si vuelve a fallar', async () => {
     const guard = fakeGuard({ grounding: () => ({ passed: false, grounding: 0.3, relevance: 0.8, blockedByContent: false }) });
     const { deps, models } = buildDeps({ guard });
     await consented(deps);
     const result = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó en setiembre?'));
-    expect(result.answer.hadCoverage).toBe(false);
+    const text = result.answer.blocks[0];
+    expect(text && text.type === 'text' ? text.text : '').toBe(UNVERIFIED_MESSAGE);
     const canonicalCalls = models.calls.filter((c) => c.system.startsWith('Actuás como editor de El País (Uruguay). Respondés'));
     expect(canonicalCalls).toHaveLength(2);
     expect(canonicalCalls[1]?.system).toContain('MODO ESTRICTO');
@@ -176,7 +220,7 @@ describe('canónica', () => {
     await store.addCost('2026-09-11', 'us.anthropic.claude-sonnet-4-6', { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 }, 0.9, 'web');
     await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó en setiembre?'));
     const canonicalCall = models.calls.find((c) => c.system.startsWith('Actuás como editor de El País (Uruguay). Respondés'));
-    expect(canonicalCall?.modelId).toBe('anthropic.claude-haiku-4-5-20251001-v1:0');
+    expect(canonicalCall?.modelId).toBe('us.amazon.nova-lite-v1:0');
   });
 
   it('pausa el servicio al 100 % del presupuesto si así está configurado', async () => {
@@ -194,11 +238,342 @@ describe('canónica', () => {
     const first = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó en setiembre?'));
     const second = await askQuestion(deps, inbound('¿Y qué dijo el sindicato?', first.answer.conversationId));
     expect(second.answer.conversationId).toBe(first.answer.conversationId);
-    const rewriteCalls = models.calls.filter((c) => c.system.includes('Reescribí la nueva pregunta'));
+    const rewriteCalls = models.calls.filter((c) => c.system.startsWith('Recibís los últimos turnos'));
     expect(rewriteCalls).toHaveLength(1);
     expect(rewriteCalls[0]?.userText).toContain('<CONVERSACION>');
     expect(retriever.calls.at(-1)?.query).toBe('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó?');
   });
+});
+
+describe('fuentes con foto y bajada del índice del corpus', () => {
+  it('completa la foto desde el índice cuando la búsqueda no la trae', async () => {
+    const { deps, store } = buildDeps();
+    await store.putCorpusIndex({
+      articleId: 'art-1',
+      contentHash: 'h',
+      s3Key: 'notas/2026/09/04/art-1.md',
+      date: '2026-09-04',
+      title: 'Alerta por sablazo en la industria cárnica',
+      url: 'https://www.elpais.com.uy/negocios/frigorifico-tacuarembo',
+      section: 'negocios/empresas',
+      origin: 'feed',
+      updatedAt: '2026-09-04T12:00:00.000Z',
+      imageUrl: 'https://imgs.elpais.com.uy/frigorifico.jpg',
+      deck: '1.300 trabajadores al seguro de paro',
+    });
+    await consented(deps);
+    const result = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó?'));
+    const bloque = result.answer.blocks.find((block) => block.type === 'sources');
+    expect(bloque?.type === 'sources' && bloque.items[0]?.imageUrl).toBe('https://imgs.elpais.com.uy/frigorifico.jpg');
+    expect(bloque?.type === 'sources' && bloque.items[0]?.deck).toBe('1.300 trabajadores al seguro de paro');
+  });
+
+  it('responde igual cuando la nota no está en el índice', async () => {
+    const { deps } = buildDeps();
+    await consented(deps);
+    const result = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó?'));
+    const bloque = result.answer.blocks.find((block) => block.type === 'sources');
+    expect(bloque?.type === 'sources' && bloque.items.length).toBeGreaterThan(0);
+    expect(bloque?.type === 'sources' && bloque.items[0]?.imageUrl).toBeUndefined();
+  });
+});
+
+describe('preguntas del día con notas viejas', () => {
+  // El test corre el 2026-09-11 y el fragmento es del 2026-09-04: nueve días de desfase.
+  it('avisa al modelo del desfase y le prohíbe hablar en presente', async () => {
+    const { deps, models } = buildDeps();
+    await consented(deps);
+    await askQuestion(deps, inbound('¿Cómo va a estar el tiempo el fin de semana?'));
+    const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor de El País'));
+    expect(canonical?.userText).toContain('<AVISO_DE_FECHA>');
+    expect(canonical?.userText).toContain('2026-09-04');
+    expect(canonical?.system).toContain('<AVISO_DE_FECHA>');
+  });
+
+  it('no avisa nada cuando la pregunta no depende del día', async () => {
+    const { deps, models } = buildDeps();
+    await consented(deps);
+    await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó?'));
+    const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor de El País'));
+    expect(canonical?.userText).not.toContain('AVISO_DE_FECHA');
+  });
+
+  it('no avisa nada cuando la nota es del día', async () => {
+    const retriever = fakeRetriever([chunk({ date: '2026-09-11' })]);
+    const { deps, models } = buildDeps({ retriever });
+    await consented(deps);
+    await askQuestion(deps, inbound('¿Cómo va a estar el tiempo hoy?'));
+    const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor de El País'));
+    expect(canonical?.userText).not.toContain('AVISO_DE_FECHA');
+  });
+});
+
+describe('normalización de la adaptación', () => {
+  it('saca del texto la cláusula de relevancia y las repreguntas', () => {
+    const r = normalizeAdaptation(
+      'El Fonasa enfrenta un déficit récord de US$ 339 millones. También se destaca el desafío de los juicios de amparo. Por qué te puede importar: la situación afecta directamente al bolsillo. ¿Te interesa saber más sobre los precios? ¿Cómo afecta esto al acceso?',
+      [],
+    );
+    expect(r.answer).toBe('El Fonasa enfrenta un déficit récord de US$ 339 millones. También se destaca el desafío de los juicios de amparo.');
+    expect(r.why).toContain('afecta directamente al bolsillo');
+    expect(r.suggestions).toEqual(['¿Te interesa saber más sobre los precios?', '¿Cómo afecta esto al acceso?']);
+  });
+
+  it('reconoce otras formas de la cláusula y no duplica repreguntas', () => {
+    const r = normalizeAdaptation('El fútbol del interior se vive con pasión. Esto te puede importar porque afecta al costo de vida. ¿Qué te parece?', [
+      '¿Qué te parece?',
+    ]);
+    expect(r.answer).toBe('El fútbol del interior se vive con pasión.');
+    expect(r.suggestions).toEqual(['¿Qué te parece?']);
+  });
+
+  it('deja intacto un texto que ya viene limpio', () => {
+    const r = normalizeAdaptation('Texto con hechos. Otra oración con datos.', ['¿Una repregunta?']);
+    expect(r.answer).toBe('Texto con hechos. Otra oración con datos.');
+    expect(r.why).toBeUndefined();
+    expect(r.suggestions).toEqual(['¿Una repregunta?']);
+  });
+});
+
+describe('sugerencias de la portada', () => {
+  it('no ofrece las preguntas del set dorado, que las dispara el smoke test', async () => {
+    const { store } = buildDeps({});
+    resetSuggestionsCache();
+    await store.putEvalCase({
+      id: 'gold-002',
+      question: '¿Cuánto cayeron las exportaciones de soja en agosto?',
+      expectedUrls: [],
+      expectedCoverage: true,
+      mustMention: [],
+      mustNotMention: [],
+      tags: [],
+      createdAt: '2026-09-10T00:00:00.000Z',
+      createdBy: 'golden-set',
+      source: 'golden',
+    });
+    const config = testConfig();
+    const log = (msgId: string, question: string) => ({
+      msgId,
+      convId: `c-${msgId}`,
+      channel: 'web',
+      day: '2026-09-11',
+      at: `2026-09-11T1${msgId}:00:00.000Z`,
+      questionMasked: question,
+      questionNormalized: question,
+      qnormHash: `h-${question.length}`,
+      hadCoverage: true,
+      personalized: false,
+      cached: false,
+      sources: [{ title: 't', url: `https://www.elpais.com.uy/${msgId}`, date: '2026-09-11', section: 'informacion' }],
+      canonicalAnswer: 'respuesta',
+      topics: ['economia'],
+      latencyMs: 1,
+      usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      costUsd: 0.001,
+      model: 'm',
+      corpusVersion: 'v1',
+      turn: 1,
+    });
+    // Dos veces cada una: el umbral para entrar en tendencias.
+    for (const [index, question] of ['¿Cuánto cayeron las exportaciones de soja en agosto?', '¿Qué pasó en la Udelar?'].entries()) {
+      await store.putQuestionLog(log(`${index * 2}`, question));
+      await store.putQuestionLog(log(`${index * 2 + 1}`, question));
+    }
+
+    const items = await suggestions(store, config, new Date('2026-09-11T15:00:00Z'), 0);
+    expect(items).not.toContain('¿Cuánto cayeron las exportaciones de soja en agosto?');
+    expect(items).toContain('¿Qué pasó en la Udelar?');
+  });
+});
+
+describe('sustento que no se puede verificar', () => {
+  it('entrega las notas en vez de decir que no se publicó', async () => {
+    const guard = fakeGuard({ grounding: () => ({ passed: false, grounding: 0.5, relevance: 1, blockedByContent: false }) });
+    const { deps, store } = buildDeps({ guard });
+    await consented(deps);
+    const result = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó?'));
+
+    const text = result.answer.blocks[0];
+    const answer = text && text.type === 'text' ? text.text : '';
+    expect(answer).toBe(UNVERIFIED_MESSAGE);
+    expect(answer).not.toContain(NO_COVERAGE_MESSAGE);
+    expect(result.answer.hadCoverage).toBe(true);
+    // La nota que sí existe viaja como fuente y con el pie para leerla completa.
+    expect(result.answer.blocks.some((block) => block.type === 'sources')).toBe(true);
+    expect(result.answer.blocks.some((block) => block.type === 'cta')).toBe(true);
+    // Y no se cachea: el intento siguiente puede pasar el verificador.
+    const again = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó?'));
+    expect((await store.listQuestionLogs('2026-09-11'))[0]?.cached).toBe(false);
+    expect(again.answer.hadCoverage).toBe(true);
+    // Y el resumen descartado queda guardado: sin él no hay forma de saber qué se fue de las notas.
+    const log = (await store.listQuestionLogs('2026-09-11'))[0];
+    expect(log?.unverifiedAnswer).toContain('Frigorífico Tacuarembó');
+  });
+});
+
+describe('pedidos de panorama del día', () => {
+  it('un pedido de panorama se responde con las notas del día, no con la búsqueda semántica', async () => {
+    const models = fakeModels({
+      canonicalJson: () =>
+        JSON.stringify({
+          answer: 'El País publicó hoy sobre el paro de la Udelar y sobre el dólar.\n\nPodés leer las notas completas en El País.',
+          usedChunks: [1, 2],
+          hadCoverage: true,
+        }),
+    });
+    const { deps, store, retriever } = buildDeps({ models });
+    await consented(deps);
+    for (const [index, title] of ['Paro en la Udelar', 'El dólar cerró estable'].entries()) {
+      await store.putCorpusIndex({
+        articleId: `dia-${index}`,
+        contentHash: `h${index}`,
+        s3Key: `k${index}`,
+        date: '2026-09-11',
+        title,
+        url: `https://www.elpais.com.uy/informacion/nota-${index}`,
+        section: 'informacion',
+        origin: 'feed',
+        updatedAt: '2026-09-11T12:00:00.000Z',
+        deck: `Bajada de ${title.toLocaleLowerCase('es')}.`,
+      });
+    }
+
+    const result = await askQuestion(deps, inbound('Haceme un resumen de las noticias del día de hoy'));
+    expect(result.answer.hadCoverage).toBe(true);
+    // Ni se consultó el índice vectorial: los fragmentos salieron del corpus por fecha.
+    expect(retriever.calls).toHaveLength(0);
+    const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor'));
+    expect(canonical?.userText).toContain('<PEDIDO_DEL_DIA>');
+    expect(canonical?.userText).toContain('Paro en la Udelar');
+    expect(canonical?.userText).toContain('El dólar cerró estable');
+  });
+
+  it('el panorama reparte por sección y deja afuera el relleno', () => {
+    const record = (articleId: string, section: string): CorpusIndexRecord => ({
+      PK: `CORPUS#${articleId}`,
+      SK: 'META',
+      type: 'CorpusIndex',
+      articleId,
+      contentHash: 'h',
+      s3Key: 'k',
+      date: '2026-09-14',
+      title: articleId,
+      url: `https://www.elpais.com.uy/${section}/${articleId}`,
+      section,
+      origin: 'feed' as const,
+      updatedAt: '2026-09-14T12:00:00.000Z',
+    });
+    const records = [
+      ...Array.from({ length: 13 }, (_, i) => record(`horo-${i}`, 'horoscopo')),
+      ...Array.from({ length: 8 }, (_, i) => record(`info-${i}`, 'informacion')),
+      ...Array.from({ length: 11 }, (_, i) => record(`mundo-${i}`, 'mundo')),
+      ...Array.from({ length: 6 }, (_, i) => record(`op-${i}`, 'opinion/la-clave')),
+    ];
+    const picked = pickForDigest(records, { ...testConfig().intents.digest, notes: 9 });
+    expect(picked).toHaveLength(9);
+    expect(picked.some((item) => item.section === 'horoscopo')).toBe(false);
+    // Tres rondas de tres secciones: ninguna se lleva el panorama.
+    const counts = new Map<string, number>();
+    for (const item of picked) counts.set(item.section.split('/')[0] ?? '', (counts.get(item.section.split('/')[0] ?? '') ?? 0) + 1);
+    expect([...counts.values()]).toEqual([3, 3, 3]);
+    expect(picked[0]?.section).toBe('informacion');
+  });
+
+  it('una sola palabra ("titulares") también pide el panorama, pese al envoltorio de tema', async () => {
+    const { deps, store, retriever, models } = buildDeps({});
+    await consented(deps);
+    await store.putCorpusIndex({
+      articleId: 'unica',
+      contentHash: 'h',
+      s3Key: 'k',
+      date: '2026-09-11',
+      title: 'Paro en la Udelar',
+      url: 'https://www.elpais.com.uy/informacion/paro',
+      section: 'informacion',
+      origin: 'feed',
+      updatedAt: '2026-09-11T12:00:00.000Z',
+    });
+    await askQuestion(deps, inbound('Titulares'));
+    expect(retriever.calls).toHaveLength(0);
+    // Y la pregunta llega sin envolver: con "¿qué publicó El País sobre Titulares?" el modelo
+    // arrancaba diciendo que no se publicó nada sobre eso.
+    const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor'));
+    expect(canonical?.userText).toContain('<PREGUNTA>\nTitulares');
+    expect(canonical?.userText).not.toContain('¿Qué publicó El País sobre Titulares?');
+  });
+
+  it('no manda al panorama una consulta con tema propio', async () => {
+    const { deps, retriever } = buildDeps({});
+    await consented(deps);
+    await askQuestion(deps, inbound('Resumen del partido de Peñarol'));
+    expect(retriever.calls).toHaveLength(1);
+  });
+
+  it('"resumen de judiciales" arma el panorama de la sección, aunque no haya publicado hoy', async () => {
+    const { deps, store, retriever, models } = buildDeps({});
+    await consented(deps);
+    await store.putCorpusIndex({
+      articleId: 'jud-1',
+      contentHash: 'h1',
+      s3Key: 'k1',
+      date: '2026-09-09',
+      title: 'Procesaron al exjerarca por el desvío de fondos',
+      url: 'https://www.elpais.com.uy/informacion/judiciales/procesaron',
+      section: 'informacion/judiciales',
+      origin: 'feed',
+      updatedAt: '2026-09-09T12:00:00.000Z',
+      deck: 'La jueza dispuso prisión preventiva.',
+    });
+    await store.putCorpusIndex({
+      articleId: 'dep-1',
+      contentHash: 'h2',
+      s3Key: 'k2',
+      date: '2026-09-11',
+      title: 'Peñarol ganó el clásico',
+      url: 'https://www.elpais.com.uy/ovacion/futbol/clasico',
+      section: 'ovacion/futbol',
+      origin: 'feed',
+      updatedAt: '2026-09-11T12:00:00.000Z',
+    });
+
+    await askQuestion(deps, inbound('Resumen de judiciales'));
+    // Sin búsqueda semántica: el nombre de la sección no es un tema para el índice vectorial.
+    expect(retriever.calls).toHaveLength(0);
+    const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor'));
+    expect(canonical?.userText).toContain('sección judiciales');
+    expect(canonical?.userText).toContain('Procesaron al exjerarca');
+    expect(canonical?.userText).not.toContain('Peñarol ganó el clásico');
+    // Las notas son del 9: la respuesta no puede presentarlas como del día.
+    expect(canonical?.userText).toContain('miércoles 9 de setiembre');
+  });
+
+  it('el panorama de una sección ignora la lista de secciones excluidas: si la piden, va', async () => {
+    const { deps, store, retriever, models } = buildDeps({});
+    await consented(deps);
+    await store.putCorpusIndex({
+      articleId: 'tv-1',
+      contentHash: 'h1',
+      s3Key: 'k1',
+      date: '2026-09-11',
+      title: 'Vuelve el musical al Solís',
+      url: 'https://www.elpais.com.uy/tvshow/teatro/solis',
+      section: 'tvshow/teatro-y-carnaval',
+      origin: 'feed',
+      updatedAt: '2026-09-11T12:00:00.000Z',
+    });
+    await askQuestion(deps, inbound('titulares de espectáculos'));
+    expect(retriever.calls).toHaveLength(0);
+    const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor'));
+    expect(canonical?.userText).toContain('Vuelve el musical al Solís');
+  });
+
+  it('una sección sin notas en la ventana cae a la búsqueda normal', async () => {
+    const { deps, retriever } = buildDeps({});
+    await consented(deps);
+    await askQuestion(deps, inbound('Resumen de judiciales'));
+    expect(retriever.calls).toHaveLength(1);
+  });
+
 });
 
 describe('personalización', () => {
@@ -250,7 +625,13 @@ describe('personalización', () => {
     await readyReader(deps, store);
     const result = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó en setiembre?'));
     expect(result.answer.personalized).toBe(false);
-    expect((await store.listIncidents('2026-09-11'))).toHaveLength(1);
+    const incidents = await store.listIncidents('2026-09-11');
+    expect(incidents).toHaveLength(1);
+    // El incidente sirve para auditar: tiene que traer la pregunta y el texto que se descartó.
+    const incident = incidents[0] as IncidentRecord;
+    expect(incident.questionMasked).toContain('Frigorífico Tacuarembó');
+    expect(incident.adaptedAnswer).toContain('Para tu bolsillo');
+    expect(incident.adaptedAnswer).not.toBe(incident.canonicalAnswer);
   });
 
   it('no personaliza con intensidad 0 ni sin evidencia suficiente', async () => {
@@ -280,5 +661,72 @@ describe('sin cobertura y chunks de prueba', () => {
     expect(result.answer.hadCoverage).toBe(false);
     expect(result.answer.blocks.some((b) => b.type === 'sources')).toBe(true);
     expect(result.answer.blocks.some((b) => b.type === 'cta')).toBe(false);
+  });
+});
+
+describe('temas vedados: coincidencia y evidencia', () => {
+  const configured = ['apuestas', 'diagnóstico médico personal', 'asesoría legal o financiera personal'];
+
+  it('acepta el nombre textual, con o sin acentos, y frases que lo contienen', () => {
+    expect(matchDeniedTopic('apuestas', configured)).toBe('apuestas');
+    expect(matchDeniedTopic('Apuestas deportivas', configured)).toBe('apuestas');
+    expect(matchDeniedTopic('diagnostico medico', configured)).toBe('diagnóstico médico personal');
+  });
+
+  it('ignora "ninguno" disfrazado, palabras sueltas cortas y temas fuera de la lista', () => {
+    for (const sentinel of ['no', 'none', 'null', 'ninguno', 'N/A', 'nada', '', '  ']) {
+      expect(matchDeniedTopic(sentinel, configured)).toBeUndefined();
+    }
+    expect(matchDeniedTopic('receta', configured)).toBeUndefined();
+    expect(matchDeniedTopic(null, configured)).toBeUndefined();
+  });
+
+});
+
+describe('consultas sin forma de pregunta', () => {
+  it('convierte temas y nombres sueltos en una pregunta explícita', () => {
+    expect(asExplicitQuestion('Valentina Cancela')).toBe('¿Qué publicó El País sobre Valentina Cancela?');
+    expect(asExplicitQuestion('Ataque Facultad Medicina')).toBe('¿Qué publicó El País sobre Ataque Facultad Medicina?');
+    expect(asExplicitQuestion('  dólar   hoy ')).toBe('¿Qué publicó El País sobre dólar hoy?');
+  });
+
+  it('deja intactas las preguntas y los pedidos ya explícitos', () => {
+    const unchanged = [
+      '¿Qué pasó en la Facultad de Medicina?',
+      'Que pasó con el dólar',
+      'Contame sobre el Frigorífico Tacuarembó',
+      'quien es el nuevo ministro',
+      'Resumime las noticias de hoy',
+    ];
+    for (const text of unchanged) expect(asExplicitQuestion(text)).toBe(text.trim().replace(/\s+/g, ' '));
+  });
+
+  it('no toca frases largas ni texto vacío', () => {
+    const long = 'nota sobre el acuerdo comercial entre Uruguay y China firmado la semana pasada en Montevideo con presencia oficial';
+    expect(asExplicitQuestion(long)).toBe(long);
+    expect(asExplicitQuestion('   ')).toBe('');
+    // Las listas salen de la configuración: agregar un verbo alcanza para que deje de envolver.
+    expect(asExplicitQuestion('Tirame el dólar')).toBe('¿Qué publicó El País sobre Tirame el dólar?');
+    const conTirame = { ...DEFAULT_INTENT_WORDS, questionMarkers: [...DEFAULT_INTENT_WORDS.questionMarkers, 'tirame'] };
+    expect(asExplicitQuestion('Tirame el dólar', conTirame)).toBe('Tirame el dólar');
+  });
+
+  it('clasifica el alcance con la pregunta explícita, no con el tema suelto', async () => {
+    const models = fakeModels({ rewriteJson: () => JSON.stringify({ question: 'FMED' }) });
+    const { deps } = buildDeps({ models });
+    await consented(deps);
+    await askQuestion(deps, inbound('FMED'));
+    const classifier = models.calls.find((call) => call.system.startsWith('Clasificás preguntas'));
+    expect(classifier?.userText).toContain('¿Qué publicó El País sobre FMED?');
+  });
+
+  it('usa la pregunta explícita para recuperar y responder', async () => {
+    // La reescritura de contexto corre igual en preguntas cortas: acá devuelve el mismo tema.
+    const models = fakeModels({ rewriteJson: () => JSON.stringify({ question: 'Frigorífico Tacuarembó' }) });
+    const { deps } = buildDeps({ models });
+    await consented(deps);
+    await askQuestion(deps, inbound('Frigorífico Tacuarembó'));
+    const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor de El País'));
+    expect(canonical?.userText).toContain('¿Qué publicó El País sobre Frigorífico Tacuarembó?');
   });
 });

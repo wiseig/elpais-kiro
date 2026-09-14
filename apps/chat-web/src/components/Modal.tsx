@@ -9,10 +9,19 @@ interface ModalProps {
   onClose?: () => void;
   closeOnBackdrop?: boolean;
   className?: string;
+  /** 'drawer' se ancla al borde derecho en escritorio (Ajustes, Historial); 'dialog' queda centrado. */
+  variant?: 'dialog' | 'drawer';
 }
 
 /** Diálogo modal accesible: bloquea el scroll del body, atrapa el foco y cierra con Escape. */
-export function Modal({ labelledBy, children, onClose, closeOnBackdrop = true, className }: ModalProps) {
+export function Modal({
+  labelledBy,
+  children,
+  onClose,
+  closeOnBackdrop = true,
+  className,
+  variant = 'dialog',
+}: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -55,11 +64,14 @@ export function Modal({ labelledBy, children, onClose, closeOnBackdrop = true, c
     if (closeOnBackdrop && onClose && event.target === event.currentTarget) onClose();
   }
 
+  const backdropClass = variant === 'drawer' ? 'modal-backdrop modal-backdrop--drawer' : 'modal-backdrop';
+  const dialogClass = [variant === 'drawer' ? 'modal modal--drawer' : 'modal', className].filter(Boolean).join(' ');
+
   return (
-    <div className="modal-backdrop" onMouseDown={handleBackdrop}>
+    <div className={backdropClass} onMouseDown={handleBackdrop}>
       <div
         ref={dialogRef}
-        className={className ? `modal ${className}` : 'modal'}
+        className={dialogClass}
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}

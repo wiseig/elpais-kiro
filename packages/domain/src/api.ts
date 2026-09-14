@@ -82,8 +82,28 @@ export interface ClientEventRequest {
   url: string;
 }
 
+/** Tarjeta de sugerencia de la portada: una pregunta y la nota que la respalda. */
+export interface SuggestionCard {
+  question: string;
+  /** "tendencia" (preguntas frecuentes con cobertura) o "reciente" (notas nuevas del corpus). */
+  kind: 'trending' | 'recent';
+  source?: SourceItem;
+}
+
 export interface SuggestionsResponse {
   items: string[];
+  cards: SuggestionCard[];
+}
+
+/** Metadatos Open Graph de una nota de El País (solo hosts permitidos), con caché. */
+export interface PreviewResponse {
+  url: string;
+  title?: string;
+  description?: string;
+  imageUrl?: string;
+  siteName?: string;
+  /** true cuando el sitio no respondió y se devuelve lo que había en la metadata. */
+  fallback: boolean;
 }
 
 export interface ApiError {
@@ -147,6 +167,8 @@ export interface QuestionsQuery {
   personalized?: 'yes' | 'no';
   q?: string;
   limit?: number;
+  /** Incluir las preguntas de control del set dorado, que por defecto quedan afuera. */
+  includeControl?: 'yes';
 }
 
 export type QuestionListItem = Pick<
@@ -168,13 +190,54 @@ export type QuestionListItem = Pick<
   | 'blocked'
   | 'evalMarked'
   | 'topics'
-> & { sourceCount: number };
+> & {
+  sourceCount: number;
+  /** Pregunta del set dorado disparada por una corrida de control, no por un lector. */
+  isControl?: boolean;
+};
 
 export interface QuestionDetail {
   log: QuestionLogRecord;
   adaptedAnswer?: string;
   explain?: string;
   verifier?: unknown;
+}
+
+export interface JobSchedule {
+  kind: 'rate' | 'daily' | 'other';
+  /** Expresión tal cual la guarda EventBridge. */
+  expression: string;
+  everyMinutes?: number;
+  utcHour?: number;
+  utcMinute?: number;
+}
+
+export interface JobSummary {
+  key: string;
+  label: string;
+  description: string;
+  schedule: JobSchedule;
+  enabled: boolean;
+  /** Tiene regla programada, así que se le puede cambiar el horario. */
+  configurable: boolean;
+  /** Se puede disparar a mano desde el backoffice. */
+  runnable: boolean;
+  lastRunSource: 'sync' | 'evals' | 'bias' | 'ingestion' | 'none';
+  lastRunAt?: string;
+  lastStatus?: 'ok' | 'failed' | 'running';
+  lastDetail?: string;
+  nextRunAt?: string;
+}
+
+export interface JobsResponse {
+  jobs: JobSummary[];
+}
+
+export interface UpdateJobRequest {
+  everyMinutes?: number;
+  utcHour?: number;
+  utcMinute?: number;
+  enabled?: boolean;
 }
 
 export interface TrendingItem {
@@ -193,6 +256,8 @@ export interface TrendingResponse {
   items: TrendingItem[];
   gaps: TrendingItem[];
   bySection: Record<string, number>;
+  /** Preguntas de control apartadas del cálculo, para que se sepa que no se perdió nada. */
+  controlExcluded: number;
 }
 
 export interface ReadersSummary {
@@ -301,8 +366,178 @@ export interface CorpusArticleSearchResponse {
 
 export interface BlocksResponse {
   days: number;
+  /** Todos los bloqueos del período, incluidas las pruebas. */
   byKind: Record<string, number>;
-  items: BlockRecord[];
+  /** Los que vinieron de preguntas del set de evaluación (smoke test y corridas de control). */
+  evalSetByKind: Record<string, number>;
+  items: BlockedItem[];
+}
+
+export interface BlockedItem extends BlockRecord {
+  /** La muestra coincide con una pregunta del set de evaluación: es tráfico de prueba, no un lector. */
+  fromEvalSet?: boolean;
+}
+
+export interface JobRunDetail {
+  label: string;
+  value: string;
+}
+
+export interface JobRun {
+  at: string;
+  status: 'ok' | 'failed' | 'running' | 'warning';
+  /** Resultado en una línea, listo para mostrar. */
+  headline: string;
+  details: JobRunDetail[];
+  error?: string;
+}
+
+export interface JobRunsResponse {
+  key: string;
+  runs: JobRun[];
+  /** Pantalla del backoffice con el detalle completo. */
+  link?: { to: string; label: string };
+  /** Explicación cuando el trabajo no deja un registro propio de corridas. */
+  note?: string;
+}
+
+export interface AdminUser {
+  username: string;
+  email: string;
+  /** Estado en palabras; `rawStatus` guarda el de Cognito por si hace falta el detalle. */
+  status: 'activo' | 'invitado' | 'debe_resetear' | 'sin_confirmar' | 'otro';
+  rawStatus: string;
+  enabled: boolean;
+  groups: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface UsersResponse {
+  items: AdminUser[];
+  /** Grupo que habilita el backoffice. */
+  adminGroup: string;
+  /** Correo de quien está mirando: el front no le ofrece borrarse ni deshabilitarse. */
+  actor: string;
+}
+
+export interface MailingSubscription {
+  email: string;
+  confirmed: boolean;
+  /** Solo existe una vez confirmada: SNS no da ARN mientras está pendiente. */
+  subscriptionArn?: string;
+}
+
+export interface MailingList {
+  key: string;
+  label: string;
+  description: string;
+  topicArn: string;
+  subscriptions: MailingSubscription[];
+}
+
+export interface MailingListsResponse {
+  lists: MailingList[];
+}
+
+/* -------------------------------- Alertas -------------------------------- */
+
+/** Familia a la que pertenece la alerta; agrupa la tabla del backoffice. */
+export type AlertGroup = 'Servicio' | 'Calidad' | 'Costos' | 'Corpus';
+
+/** Qué tan urgente es lo que avisa. No cambia el envío: ordena la lectura. */
+export type AlertSeverity = 'critica' | 'importante' | 'aviso';
+
+/** Estado de la alarma en CloudWatch, en castellano. */
+export type AlertState = 'ok' | 'alarma' | 'sin_datos' | 'desconocido';
+
+export interface AlertSummary {
+  key: string;
+  label: string;
+  group: AlertGroup;
+  severity: AlertSeverity;
+  /** Por qué llega: qué mide y qué la dispara, en una frase. */
+  why: string;
+  /** Qué conviene hacer cuando llega. */
+  action: string;
+  /** La condición armada con los valores vigentes ("si pasa de 8000 ms en 2 ventanas de 5 min"). */
+  condition: string;
+  /** Qué mira la métrica, en palabras. */
+  metricLabel: string;
+  /** Unidad del umbral: se muestra al lado del campo. */
+  unit: string;
+  /** La misma unidad en singular, para no escribir «1 corridas fallidas». */
+  unitOne?: string;
+  threshold: number;
+  /** Operador tal cual lo guarda CloudWatch (`GreaterThanThreshold`, …). */
+  comparisonOperator: string;
+  /** El mismo operador en símbolo, para armar frases. */
+  comparison: string;
+  /** Ventanas de medición que tienen que dar mal seguidas. */
+  evaluationPeriods: number;
+  datapointsToAlarm: number;
+  /** Largo de cada ventana, en minutos. */
+  periodMinutes: number;
+  state: AlertState;
+  /** Explicación que deja CloudWatch del último cambio de estado. */
+  stateReason?: string;
+  stateChangedAt?: string;
+  /** Si está apagado, la alarma sigue midiendo pero no manda correo. */
+  notifying: boolean;
+  /** Existe en AWS y se le puede tocar el umbral desde acá. */
+  configurable: boolean;
+  /** Rango que acepta el umbral en el backoffice. */
+  minThreshold: number;
+  maxThreshold: number;
+  stepThreshold: number;
+  alarmName: string;
+  /** La alarma del catálogo todavía no existe en la cuenta (falta desplegar). */
+  missing: boolean;
+}
+
+/** Aviso que aparece en Inicio y no sale por correo. El umbral vive en Configuración. */
+export interface PanelAlert {
+  key: string;
+  label: string;
+  why: string;
+  condition: string;
+  /** Ancla de la pantalla de Configuración donde se cambia el umbral, si se puede cambiar. */
+  settingLabel?: string;
+}
+
+export interface AlertsResponse {
+  alerts: AlertSummary[];
+  /** Avisos del panel de Inicio, con el umbral que tienen hoy en la configuración. */
+  panel: PanelAlert[];
+  /** A quién le llegan los correos de alarma (la lista «Alarmas»). */
+  recipients: MailingSubscription[];
+  alertsTopicArn: string;
+  /** Las alarmas del catálogo que todavía no existen en la cuenta. */
+  missingCount: number;
+  /**
+   * Falló leer CloudWatch o SNS. Sin esto una lectura fallida se leería como «no está
+   * desplegada» o «no le llega a nadie», que es peor que decir que no se pudo mirar.
+   */
+  readError?: string;
+}
+
+export interface UpdateAlertRequest {
+  threshold?: number;
+  evaluationPeriods?: number;
+  /** Silenciar o volver a habilitar el envío por correo. */
+  notifying?: boolean;
+}
+
+export interface AlertHistoryEntry {
+  at: string;
+  kind: 'alarma' | 'ok' | 'sin_datos' | 'configuracion';
+  summary: string;
+}
+
+export interface AlertHistoryResponse {
+  key: string;
+  items: AlertHistoryEntry[];
+  note?: string;
 }
 
 export interface ChannelsResponse {

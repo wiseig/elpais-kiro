@@ -1,0 +1,108 @@
+/* Marca "Preguntale a El País". Colores tomados de la identidad de El País y de Club El País. */
+:root {
+  --ep-blue-900: #0a3d7a;
+  --ep-blue-700: #0b4a9c;
+  --ep-blue-500: #1f6fbf;
+  --ep-sky: #62c6f9;
+  --ep-white: #ffffff;
+  --ep-red: #c8102e;
+  --font-kicker: 'Nunito', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+}
+
+.wordmark { display: inline-block; vertical-align: middle; }
+
+.sparkle { display: inline-block; vertical-align: middle; }
+
+/* ---------- Badge circular apilado ---------- */
+.brand-badge {
+  --badge-size: 240px;
+  width: var(--badge-size);
+  height: var(--badge-size);
+  border-radius: 50%;
+  background: radial-gradient(120% 120% at 30% 20%, var(--ep-blue-500) 0%, var(--ep-blue-700) 45%, var(--ep-blue-900) 100%);
+  color: var(--ep-white);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--badge-size) * 0.035);
+  box-shadow: 0 12px 32px rgba(10, 61, 122, 0.28), inset 0 -6px 18px rgba(0, 0, 0, 0.12);
+  user-select: none;
+}
+.brand-badge__kicker {
+  font-family: var(--font-kicker);
+  font-style: italic;
+  font-weight: 700;
+  font-size: calc(var(--badge-size) * 0.14);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--ep-sky);
+  display: inline-flex;
+  align-items: flex-start;
+  gap: calc(var(--badge-size) * 0.02);
+  transform: translateX(calc(var(--badge-size) * -0.01));
+}
+.brand-badge__sparkle { color: var(--ep-sky); margin-top: calc(var(--badge-size) * -0.02); }
+.brand-badge__wordmark { color: var(--ep-white); filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.12)); }
+
+/* ---------- Lockup horizontal ---------- */
+.brand-lockup {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1;
+  color: var(--ep-blue-700);
+}
+.brand-lockup__kicker {
+  font-family: var(--font-kicker);
+  font-style: italic;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: var(--ep-blue-500);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.brand-lockup__sparkle { color: var(--ep-sky); }
+.brand-lockup__wordmark { color: var(--ep-blue-900); }
+[data-theme='dark'] .brand-lockup { color: var(--ep-white); }
+[data-theme='dark'] .brand-lockup__kicker { color: var(--ep-sky); }
+[data-theme='dark'] .brand-lockup__wordmark { color: var(--ep-white); }
+
+/* ---------- Avatar del asistente ---------- */
+.ai-mark {
+  --mark-size: 32px;
+  position: relative;
+  display: inline-block;
+  width: var(--mark-size);
+  height: var(--mark-size);
+  flex: 0 0 auto;
+}
+.ai-mark__tile {
+  position: absolute;
+  inset: 0;
+  border-radius: 24%;
+  background: linear-gradient(160deg, var(--ep-blue-500) 0%, var(--ep-blue-700) 55%, var(--ep-blue-900) 100%);
+  color: var(--ep-white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(10, 61, 122, 0.3);
+}
+.ai-mark__badge {
+  position: absolute;
+  right: calc(var(--mark-size) * -0.18);
+  top: calc(var(--mark-size) * -0.18);
+  width: calc(var(--mark-size) * 0.56);
+  height: calc(var(--mark-size) * 0.56);
+  border-radius: 50%;
+  background: var(--ep-white);
+  color: var(--ep-blue-500);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+[data-theme='dark'] .ai-mark__badge { background: #0f2033; color: var(--ep-sky); }

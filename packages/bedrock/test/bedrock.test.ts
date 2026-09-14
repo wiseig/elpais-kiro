@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { defaultConfig } from '@pelp/domain';
+import { CURRENT_CONSENT_TEXT_VERSION, defaultConfig } from '@pelp/domain';
 import type { RetrievedChunk } from '@pelp/domain';
 import { parseJsonObject } from '../src/converse';
 import { costUsd } from '../src/cost';
 import { rerankScore, selectChunks, sourcesFromChunks, toChunk } from '../src/retrieve';
 
-const config = defaultConfig('x'.repeat(64));
+const config = defaultConfig(CURRENT_CONSENT_TEXT_VERSION);
 const retrieval = config.answering.retrieval;
 const now = Math.floor(Date.parse('2026-09-11T12:00:00Z') / 1000);
 

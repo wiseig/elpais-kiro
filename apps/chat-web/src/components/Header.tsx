@@ -1,79 +1,50 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { GearIcon, PlusIcon } from './Icons';
+import type { ReaderMode } from '@pelp/domain';
+import { BrandLockup } from '../brand/Brand';
+import { MenuIcon } from './Icons';
 
 interface Props {
+  /** Solo se usa en mobile: abre el cajón del riel. */
+  onOpenMenu?: () => void;
+  mode?: ReaderMode;
   onOpenSettings?: () => void;
-  onNewConversation?: () => void;
-  settingsOpen?: boolean;
 }
 
-/** Logo de El País con texto de respaldo si la imagen no carga. */
-export function Logo() {
-  const [failed, setFailed] = useState(false);
-  if (failed) {
-    return (
-      <span className="logo logo--text" aria-hidden="true">
-        EL PAÍS
-      </span>
-    );
-  }
-  return (
-    <img
-      className="logo"
-      src="/logo.jpg"
-      alt=""
-      width={40}
-      height={40}
-      decoding="async"
-      onError={() => setFailed(true)}
-    />
-  );
-}
+const MODE_CHIP: Record<ReaderMode, { label: string; title: string; tone: string }> = {
+  personalized: { label: 'P', title: 'Modo personalizado. Abrir ajustes.', tone: 'brand' },
+  neutral: { label: 'N', title: 'Modo neutral. Abrir ajustes.', tone: 'neutral' },
+  undecided: { label: '?', title: 'Elegí un modo. Abrir ajustes.', tone: 'warn' },
+};
 
-export function Header({ onOpenSettings, onNewConversation, settingsOpen = false }: Props) {
+/** Encabezado del área principal: marca oficial de El País + pill "Beta" y, a la derecha, el chip de modo. */
+export function Header({ onOpenMenu, mode, onOpenSettings }: Props) {
+  const chip = mode ? MODE_CHIP[mode] : null;
   return (
     <header className="header">
       <div className="header-inner">
+        {onOpenMenu ? (
+          <button type="button" className="icon-btn header-menu" onClick={onOpenMenu} aria-label="Abrir menú">
+            <MenuIcon />
+          </button>
+        ) : null}
         <Link to="/" className="brand" aria-label="Preguntale a El País, inicio">
-          <Logo />
-          <span className="brand-text">
-            <span className="brand-title">Preguntale a El País</span>
-            <span className="brand-subtitle">Respuestas con las notas de El País</span>
-          </span>
+          <BrandLockup />
+          <span className="beta-pill">Beta</span>
         </Link>
         <div className="header-actions">
-          {onNewConversation ? (
-            <button type="button" className="btn btn-ghost" onClick={onNewConversation}>
-              <PlusIcon />
-              <span className="btn-label">Nueva conversación</span>
-            </button>
-          ) : null}
-          {onOpenSettings ? (
+          {chip && onOpenSettings ? (
             <button
               type="button"
-              className="btn btn-ghost"
+              className={`mode-chip mode-chip--${chip.tone}`}
               onClick={onOpenSettings}
               aria-haspopup="dialog"
-              aria-expanded={settingsOpen}
+              title={chip.title}
             >
-              <GearIcon />
-              <span className="btn-label">Ajustes</span>
+              {chip.label}
             </button>
           ) : null}
         </div>
       </div>
     </header>
-  );
-}
-
-export function Footer() {
-  return (
-    <footer className="footer">
-      <p>
-        Las respuestas se elaboran únicamente con notas de El País. Verificá siempre en la nota
-        original. <Link to="/terminos">Términos de uso y privacidad</Link>
-      </p>
-    </footer>
   );
 }

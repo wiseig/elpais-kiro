@@ -89,6 +89,7 @@ export async function recordDecision(
     ...(evidence.uaHash ? { uaHash: evidence.uaHash } : {}),
     ...(evidence.ipPrefixHash ? { ipPrefixHash: evidence.ipPrefixHash } : {}),
     ...(evidence.ageConfirmed !== undefined ? { ageConfirmed: evidence.ageConfirmed } : {}),
+    ...(decision === 'personalize' && evidence.ageConfirmed ? { ageThreshold: config.consent.minAgePersonalization } : {}),
   });
 
   let profile: ReaderProfile = {
