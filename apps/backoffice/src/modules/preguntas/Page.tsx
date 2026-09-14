@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import type { QuestionDetail, QuestionListItem, QuestionsQuery } from '@pelp/domain/api';
 import { useApi } from '../../shared/ApiContext';
 import { useAsync } from '../../shared/useAsync';
@@ -114,6 +115,16 @@ function DetailView({ detail }: { detail: QuestionDetail }) {
           <dt>Versión del corpus</dt>
           <dd>
             <code>{log.corpusVersion}</code>
+          </dd>
+          <dt>Lector</dt>
+          <dd>
+            {log.readerId ? (
+              <Link to={`/lectores?lector=${encodeURIComponent(log.readerId)}`}>
+                Ver el lector <code>{log.readerId}</code> →
+              </Link>
+            ) : (
+              <span className="muted">Modo neutral: la pregunta no queda atada a nadie.</span>
+            )}
           </dd>
           <dt>Conversación</dt>
           <dd>

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { CohortMetrics, ReaderDetail, ReaderListItem, ReadersSummary, QuestionListItem } from '@pelp/domain/api';
 import { frameById, type Cohort } from '@pelp/domain';
 import { useApi } from '../../shared/ApiContext';
@@ -18,6 +19,7 @@ import { Chip } from '../../shared/components/Chip';
 import { Modal } from '../../shared/components/Modal';
 import { ConfirmDialog } from '../../shared/components/ConfirmDialog';
 import { JsonView } from '../../shared/components/JsonView';
+import { ReaderProfileView } from '../../shared/components/ReaderProfile';
 import { Empty } from '../../shared/components/Empty';
 import { Notice, useNotice } from '../../shared/components/Notice';
 import { fmtDateTime, fmtInt, fmtNumber, fmtPercent, fmtUsd, truncate, fmtMs } from '../../shared/format';
@@ -274,7 +276,11 @@ function ReaderDetailView({ detail }: { detail: ReaderDetail }) {
       </section>
       <section>
         <h3 className="h3">Perfil actual</h3>
-        <JsonView value={detail.profile} maxHeight={360} />
+        <ReaderProfileView profile={detail.profile} />
+        <details className="details">
+          <summary>Ver el perfil en crudo</summary>
+          <JsonView value={detail.profile} maxHeight={360} />
+        </details>
       </section>
       <section>
         <h3 className="h3">Versiones del perfil ({detail.profileVersions.length})</h3>
@@ -386,7 +392,20 @@ function Individual({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
   const [channel, setChannel] = useState('');
   const [limit, setLimit] = useState(100);
   const list = useAsync(() => api.readers(channel.trim() || undefined, limit), [api, channel, limit]);
-  const [selected, setSelected] = useState<string | null>(null);
+  // `/lectores?lector=<id>` abre la ficha directo: es el enlace que sale del panel de preguntas.
+  const [params, setParams] = useSearchParams();
+  const fromUrl = params.get('lector');
+  const [selected, setSelected] = useState<string | null>(fromUrl);
+  useEffect(() => {
+    if (fromUrl) setSelected(fromUrl);
+  }, [fromUrl]);
+  const close = () => {
+    setSelected(null);
+    if (fromUrl) {
+      params.delete('lector');
+      setParams(params, { replace: true });
+    }
+  };
   const notice = useNotice();
 
   const columns: Column<ReaderListItem>[] = [
@@ -436,10 +455,10 @@ function Individual({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
       {selected && (
         <ReaderDrawer
           readerId={selected}
-          onClose={() => setSelected(null)}
+          onClose={close}
           onDeleted={(readerId) => {
             list.setData((current) => (current ? { items: current.items.filter((item) => item.readerId !== readerId) } : current));
-            setSelected(null);
+            close();
             notice.show('success', `Perfil ${truncate(readerId, 18)} borrado.`);
           }}
         />
