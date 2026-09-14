@@ -382,6 +382,7 @@ function intentWords(config: Config): IntentWords {
     digestToday: intents.digest.today,
     digestStandalone: intents.digest.standalone,
     digestMaxWords: intents.digest.maxWords,
+    digestFiller: intents.digest.filler,
     digestSections: intents.digest.sections,
   };
 }
@@ -635,7 +636,10 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
 
   const conversation = await loadConversation(deps, reader, inbound, now);
   const turns = (conversation.turnsData ?? []).slice(-config.answering.memoryTurns * 2);
-  const rewrite = await rewriteQuestion(deps, config, scoped, turns);
+  // La reescritura recibe lo que escribió el lector, no el texto envuelto: con "En uruguay" el
+  // envoltorio le entregaba "¿Qué publicó El País sobre En uruguay?", que parece una pregunta
+  // completa, así que la daba por autónoma y se perdía el turno anterior (14/9/2026).
+  const rewrite = await rewriteQuestion(deps, config, masked, turns);
   calls.push(...rewrite.calls);
   // La intención se mide sobre lo que escribió el lector, no sobre el texto ya envuelto: con
   // "titulares" el envoltorio sumaba "qué publicó El País sobre…" y la frase dejaba de entrar

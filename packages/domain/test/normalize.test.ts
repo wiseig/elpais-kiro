@@ -124,11 +124,40 @@ describe('isDigestRequest', () => {
   });
 
   it('toma las listas de la configuración: una palabra agregada alcanza', () => {
-    const frase = 'Tirame la posta del día';
+    const frase = 'La posta de hoy';
     expect(isDigestRequest(frase)).toBe(false);
     expect(
       isDigestRequest(frase, { ...DEFAULT_INTENT_WORDS, digestWords: [...DEFAULT_INTENT_WORDS.digestWords, 'la posta'] }),
     ).toBe(true);
+    // Un verbo desconocido cuenta como tema hasta que se lo agrega a los marcadores de pedido.
+    const conVerbo = { ...DEFAULT_INTENT_WORDS, digestWords: [...DEFAULT_INTENT_WORDS.digestWords, 'la posta'] };
+    expect(isDigestRequest('Tirame la posta de hoy', conVerbo)).toBe(false);
+    expect(
+      isDigestRequest('Tirame la posta de hoy', { ...conVerbo, questionMarkers: [...conVerbo.questionMarkers, 'tirame'] }),
+    ).toBe(true);
+  });
+
+  it('reconoce "qué está pasando" con y sin alcance geográfico', () => {
+    for (const text of [
+      'Que está pasando esta tarde?',
+      '¿Qué está pasando esta tarde en Uruguay?',
+      '¿Qué está pasando hoy?',
+      '¿Qué hay hoy?',
+      'Que pasa ahora?',
+    ]) {
+      expect(isDigestRequest(text), text).toBe(true);
+    }
+  });
+
+  it('no manda al panorama lo que tiene asunto propio aunque nombre el día', () => {
+    for (const text of [
+      '¿Qué está pasando en el puerto?',
+      '¿Qué pasa ahora con el dólar?',
+      '¿Qué pasó hoy con Peñarol?',
+      '¿Qué hay de nuevo sobre la Udelar?',
+    ]) {
+      expect(isDigestRequest(text), text).toBe(false);
+    }
   });
 
   it('deja pasar las consultas que tienen tema propio', () => {

@@ -156,6 +156,8 @@ export const ConfigSchema = z.object({
           today: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.digestToday]),
           standalone: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.digestStandalone]),
           maxWords: z.number().int().min(1).max(12).default(DEFAULT_INTENT_WORDS.digestMaxWords),
+          /** Palabras que no cuentan como tema propio al decidir si es un panorama. */
+          filler: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.digestFiller]),
           /** Cuántas notas del día se le pasan al modelo para armar el panorama. */
           notes: z.number().int().min(3).max(20).default(8),
           /** Secciones que no entran en un panorama (el horóscopo se llevaba medio resumen). */

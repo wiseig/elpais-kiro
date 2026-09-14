@@ -64,6 +64,11 @@ export interface IntentWords {
   digestStandalone: readonly string[];
   /** Hasta cuántas palabras vale una frase suelta como pedido de panorama. */
   digestMaxWords: number;
+  /**
+   * Palabras que no son tema: alcance geográfico, muletillas, el nombre del diario. Lo que queda
+   * después de sacarlas decide si la consulta pide el panorama o pregunta por algo puntual.
+   */
+  digestFiller: readonly string[];
   /** Secciones del diario que el lector puede pedir por su nombre. */
   digestSections: readonly DigestSection[];
 }
@@ -113,11 +118,21 @@ export const DEFAULT_INTENT_WORDS: IntentWords = {
   digestWords: [
     'resumen', 'resumime', 'resumi', 'panorama', 'titulares', 'portada', 'novedades', 'que hay de nuevo', 'que hay hoy',
     'lo mas importante', 'lo ultimo', 'ultimas noticias', 'noticias del dia', 'noticias de hoy', 'que paso hoy',
-    'que pasa hoy', 'que se publico hoy', 'que publicaron hoy', 'como viene el dia',
+    'que pasa hoy', 'que se publico hoy', 'que publicaron hoy', 'como viene el dia', 'que esta pasando', 'que estuvo pasando',
+    'que viene pasando', 'que pasa', 'que paso', 'que hay',
   ],
-  digestToday: ['hoy', 'del dia', 'de la jornada', 'de la manana', 'de la tarde', 'de esta manana', 'de esta tarde'],
+  digestToday: [
+    'hoy', 'del dia', 'de la jornada', 'de la manana', 'de la tarde', 'de esta manana', 'de esta tarde',
+    'esta manana', 'esta tarde', 'esta noche', 'ahora', 'en este momento', 'por estas horas', 'recien',
+  ],
   digestStandalone: ['titulares', 'portada', 'novedades', 'ultimas noticias', 'que hay de nuevo', 'lo mas importante'],
   digestMaxWords: 5,
+  digestFiller: [
+    'uruguay', 'uruguaya', 'uruguayo', 'montevideo', 'pais', 'diario', 'noticia', 'noticias', 'novedad', 'novedades',
+    'actualidad', 'jornada', 'nuevo', 'nueva', 'nuevas', 'nuevos', 'esta', 'este', 'esto', 'para', 'sobre', 'como',
+    'algo', 'cosa', 'cosas', 'tema', 'temas', 'dame', 'decime', 'contame', 'haceme', 'mostrame', 'pasame', 'quiero',
+    'saber', 'contar', 'importante', 'ultimo', 'ultima', 'ultimos', 'ultimas', 'general', 'principales', 'principal',
+  ],
   digestSections: DEFAULT_DIGEST_SECTIONS,
 };
 
@@ -148,12 +163,32 @@ export function wordListRegex(words: readonly string[], all = false): RegExp | u
  * (el 14/9/2026 trajo las notas del aniversario del diario y contestó que no se había publicado
  * nada). Se responden con las notas del día en vez del índice vectorial.
  */
+/**
+ * Lo que queda de la consulta después de sacarle la frase de panorama, el ancla temporal y las
+ * palabras que no son tema. Si sobra algo, el lector preguntó por un asunto concreto: "qué está
+ * pasando en el puerto" no es un panorama, "qué está pasando esta tarde en Uruguay" sí.
+ */
+function leftoverTopic(text: string, words: IntentWords): string[] {
+  // Los verbos de pedido tampoco son tema: si alguien agrega "tirame" a la lista de marcadores,
+  // "tirame las noticias de hoy" tiene que seguir siendo un panorama.
+  const filler = new Set([...words.digestFiller, ...words.questionMarkers].map((word) => foldAccents(word)));
+  let rest = text;
+  for (const list of [words.digestWords, words.digestToday, words.digestStandalone]) {
+    const regex = wordListRegex(list, true);
+    if (regex) rest = rest.replace(regex, ' ');
+  }
+  return rest
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 4 && !filler.has(word));
+}
+
 export function isDigestRequest(question: string, words: IntentWords = DEFAULT_INTENT_WORDS): boolean {
   const text = foldAccents(question);
   // El nombre de una sección ya es el pedido completo: "resumen de judiciales", "policiales".
   if (digestSection(question, words)) return true;
   const digest = wordListRegex(words.digestWords);
   if (!digest?.test(text)) return false;
+  if (leftoverTopic(text, words).length > 0) return false;
   if (wordListRegex(words.digestToday)?.test(text)) return true;
   const standalone = wordListRegex(words.digestStandalone);
   if (!standalone?.test(text)) return false;

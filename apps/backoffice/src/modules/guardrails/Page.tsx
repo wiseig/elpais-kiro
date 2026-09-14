@@ -73,6 +73,7 @@ interface GuardrailsForm {
   digestWordsText: string;
   digestTodayText: string;
   digestStandaloneText: string;
+  digestFillerText: string;
   digestMaxWords: number;
   digestNotes: number;
   digestSkipText: string;
@@ -110,6 +111,7 @@ function formFromConfig(config: Config): GuardrailsForm {
     digestWordsText: toLines(config.intents.digest.words),
     digestTodayText: toLines(config.intents.digest.today),
     digestStandaloneText: toLines(config.intents.digest.standalone),
+    digestFillerText: toLines(config.intents.digest.filler),
     digestMaxWords: config.intents.digest.maxWords,
     digestNotes: config.intents.digest.notes,
     digestSkipText: toLines(config.intents.digest.skipSections),
@@ -137,6 +139,7 @@ function mergeConfig(base: Config, form: GuardrailsForm): Config {
         words: fromLines(form.digestWordsText),
         today: fromLines(form.digestTodayText),
         standalone: fromLines(form.digestStandaloneText),
+        filler: fromLines(form.digestFillerText),
         maxWords: form.digestMaxWords,
         notes: form.digestNotes,
         skipSections: fromLines(form.digestSkipText),
@@ -390,6 +393,14 @@ export default function GuardrailsPage() {
                 hint="Valen solas, sin ancla al día, cuando la consulta es corta: «titulares», «portada»."
               >
                 <textarea className="input" rows={3} value={form.digestStandaloneText} onChange={(event) => set('digestStandaloneText', event.target.value)} />
+              </Field>
+            </div>
+            <div className="form-grid__full">
+              <Field
+                label="Palabras que no cuentan como tema"
+                hint="Una por línea. Deciden si la consulta pide el panorama o pregunta por algo puntual: «qué está pasando esta tarde en Uruguay» es panorama porque «Uruguay» es alcance, «qué está pasando en el puerto» no lo es. Los verbos de pedido de la lista de arriba ya cuentan acá."
+              >
+                <textarea className="input" rows={4} value={form.digestFillerText} onChange={(event) => set('digestFillerText', event.target.value)} />
               </Field>
             </div>
             <Field label="Largo máximo de esas frases sueltas" hint="En palabras.">
