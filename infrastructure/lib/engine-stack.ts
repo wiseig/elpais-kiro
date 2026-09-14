@@ -108,7 +108,7 @@ export class EngineStack extends Stack {
     });
 
     /* -------------------------------- Alarmas -------------------------------- */
-    const alarmAction = new cwactions.SnsAction(data.alertsTopic);
+    const alarmAction = new cwactions.SnsAction(data.alarmsTopic);
     const alarms: cloudwatch.Alarm[] = [];
     alarms.push(
       new cloudwatch.Alarm(this, 'EngineErrors', {

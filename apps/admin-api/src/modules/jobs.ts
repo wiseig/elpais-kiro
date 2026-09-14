@@ -306,14 +306,31 @@ export async function jobRuns(ctx: AdminContext, key: string): Promise<JobRunsRe
   }
 
   if (key === 'costs') {
+    // La hora sale de la regla, no de una constante: el trabajo consolida a las 23:55 de
+    // Montevideo y la pantalla mostraba una hora inventada.
+    const ruleName = mapFromEnv(ctx, 'JOB_RULES')[key];
+    let runAt = { hour: 2, minute: 55 };
+    if (ruleName) {
+      const schedule = await ctx.events
+        .send(new DescribeRuleCommand({ Name: ruleName }))
+        .then((rule) => parseSchedule(rule.ScheduleExpression ?? ''))
+        .catch(() => undefined);
+      if (schedule?.kind === 'daily' && schedule.utcHour !== undefined && schedule.utcMinute !== undefined) {
+        runAt = { hour: schedule.utcHour, minute: schedule.utcMinute };
+      }
+    }
+    const pad = (value: number) => String(value).padStart(2, '0');
     const days = lastDays(7, ctx.now);
     const runs: JobRun[] = [];
     for (const day of days) {
       const records = await ctx.store.listCosts(day).catch(() => []);
       if (!records.length) continue;
       const total = records.reduce((sum, item) => sum + item.costUsd, 0);
+      // La corrida que consolida un día cae de madrugada del día siguiente en UTC.
+      const at = new Date(`${day}T00:00:00Z`);
+      at.setUTCDate(at.getUTCDate() + 1);
       runs.push({
-        at: `${day}T03:10:00.000Z`,
+        at: `${at.toISOString().slice(0, 10)}T${pad(runAt.hour)}:${pad(runAt.minute)}:00.000Z`,
         status: 'ok',
         headline: `${usd(total)} el ${day}`,
         details: records

@@ -12,6 +12,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import type { Construct } from 'constructs';
 import type { PelpEnv } from '../config/env';
+import { pelpFunction } from './lambda';
 
 export interface DataStackProps extends StackProps {
   pelp: PelpEnv;
@@ -36,6 +37,8 @@ export class DataStack extends Stack {
   readonly inboundQueue: sqs.Queue;
   readonly eventBus: events.EventBus;
   readonly alertsTopic: sns.Topic;
+  /** Tema interno donde publican las alarmas antes de traducirse. */
+  readonly alarmsTopic: sns.Topic;
   readonly newsroomTopic: sns.Topic;
   readonly webAclRegional: wafv2.CfnWebACL;
   readonly webAclCloudFront: wafv2.CfnWebACL;
@@ -277,6 +280,20 @@ export class DataStack extends Stack {
     this.eventBus = new events.EventBus(this, 'Events', { eventBusName: pelp.eventBusName });
     this.alertsTopic = new sns.Topic(this, 'Alerts', { topicName: `pelp-alerts${pelp.suffix}`, displayName: 'Preguntale a El País — alarmas' });
     if (pelp.alertEmail) this.alertsTopic.addSubscription(new subscriptions.EmailSubscription(pelp.alertEmail));
+
+    // Las alarmas no escriben directo al tema que lee la gente: pasan por uno interno y una Lambda
+    // las traduce a castellano y a hora de Montevideo. Así nadie tiene que cambiar su suscripción.
+    this.alarmsTopic = new sns.Topic(this, 'AlarmsRaw', { topicName: `pelp-alarms-raw${pelp.suffix}`, displayName: 'Alarmas sin formatear' });
+    const alertMail = pelpFunction(this, 'AlertMail', {
+      functionName: `pelp-alert-mail${pelp.suffix}`,
+      entry: 'apps/jobs/src/alert-mail.ts',
+      description: 'Reescribe el aviso de CloudWatch en castellano y hora de Montevideo.',
+      timeout: Duration.seconds(30),
+      memorySize: 512,
+      environment: { ALERTS_TOPIC_ARN: this.alertsTopic.topicArn, SERVICE_NAME: 'pelp-alert-mail', PELP_ENV: pelp.envName },
+    });
+    this.alertsTopic.grantPublish(alertMail);
+    this.alarmsTopic.addSubscription(new subscriptions.LambdaSubscription(alertMail));
     this.newsroomTopic = new sns.Topic(this, 'Newsroom', { topicName: `pelp-newsroom${pelp.suffix}`, displayName: 'Preguntale a El País — redacción' });
 
     /* --------------------------------- WAF --------------------------------- */
@@ -341,6 +358,7 @@ export class DataStack extends Stack {
     new CfnOutput(this, 'InboundQueueUrl', { value: this.inboundQueue.queueUrl });
     new CfnOutput(this, 'EventBusName', { value: this.eventBus.eventBusName });
     new CfnOutput(this, 'AlertsTopicArn', { value: this.alertsTopic.topicArn });
+    new CfnOutput(this, 'AlarmsTopicArn', { value: this.alarmsTopic.topicArn });
     new CfnOutput(this, 'FeedSecretArn', { value: this.feedSecret.secretArn });
     new CfnOutput(this, 'DailyBriefSecretArn', { value: this.dailyBriefSecret.secretArn });
   }

@@ -249,12 +249,32 @@ export function daysBetweenDays(today: string, day: string): number {
 }
 
 /** Fecha calendario en America/Montevideo (YYYY-MM-DD). */
+/** Uruguay no tiene horario de verano desde 2015, pero se usa la zona y no un desfase fijo. */
+export const MONTEVIDEO_TZ = 'America/Montevideo';
+
 export function montevideoDay(date: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Montevideo',
+    timeZone: MONTEVIDEO_TZ,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+  }).format(date);
+}
+
+/**
+ * Fecha y hora en Montevideo para textos que lee una persona. Todo lo que corre en AWS está en
+ * UTC, que es lo correcto para guardar, pero un correo que dice "12:43 UTC" a alguien que son las
+ * 09:43 no sirve: hay que traducirlo en el borde.
+ */
+export function montevideoDateTime(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('es-UY', {
+    timeZone: MONTEVIDEO_TZ,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   }).format(date);
 }
 

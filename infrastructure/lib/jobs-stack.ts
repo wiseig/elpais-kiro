@@ -123,7 +123,7 @@ export class JobsStack extends Stack {
     }
 
     /* -------------------------------- Alarmas -------------------------------- */
-    const alarmAction = new cwactions.SnsAction(data.alertsTopic);
+    const alarmAction = new cwactions.SnsAction(data.alarmsTopic);
     const jobsDims = { Service: 'pelp-jobs', Env: pelp.envName };
     const engineDims = { Service: 'pelp-engine', Env: pelp.envName };
     const metric = (name: string, dims: Record<string, string>, statistic: string, period: Duration) =>

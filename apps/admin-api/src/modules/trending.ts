@@ -1,5 +1,6 @@
 import { PublishCommand } from '@aws-sdk/client-sns';
 import type { SendTrendingRequest, TrendingItem, TrendingResponse } from '@pelp/domain/api';
+import { montevideoDateTime } from '@pelp/domain';
 import { HttpError, audit, type AdminContext } from '../context';
 import { collectLogs, splitControl } from './questions';
 
@@ -51,7 +52,7 @@ export async function sendToNewsroom(ctx: AdminContext, body: Partial<SendTrendi
     '',
     ...lines,
     '',
-    `Enviado por ${ctx.actor} el ${ctx.now.toISOString()}.`,
+    `Enviado por ${ctx.actor} el ${montevideoDateTime(ctx.now)} (hora de Montevideo).`,
   ].join('\n');
   await ctx.sns.send(new PublishCommand({ TopicArn: topicArn, Subject: `Preguntale a El País: ${body.onlyGaps ? 'huecos editoriales' : 'tendencias'} (${days} días)`, Message: message }));
   await audit(ctx, 'trending.send', undefined, { after: { days, onlyGaps: Boolean(body.onlyGaps), items: list.length }, ...(body.note ? { reason: body.note } : {}) });

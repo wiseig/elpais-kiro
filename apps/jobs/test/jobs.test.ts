@@ -8,6 +8,7 @@ import { parseFeed } from '../src/lib/feed';
 import { datesBetween } from '../src/lib/dailybrief';
 import { applyProfilerRules, decayFactor, mergeWeights } from '../src/profiler';
 import { scoreCitations } from '../src/evals';
+import { buildMail } from '../src/alert-mail';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const feed = JSON.parse(readFileSync(path.join(here, '../../../packages/testing/fixtures/feed-sample.json'), 'utf8')) as FeedResponse;
@@ -440,5 +441,31 @@ describe('retención del corpus', () => {
     const config = defaultConfig(CURRENT_CONSENT_TEXT_VERSION);
     expect(config.corpus.retentionDays).toBe(90);
     expect(config.answering.retrieval.recencyHorizonDays).toBe(90);
+  });
+});
+
+describe('correo de alarmas', () => {
+  it('traduce el aviso de CloudWatch a castellano y hora de Montevideo', () => {
+    const { subject, body } = buildMail(
+      {
+        AlarmName: 'pelp-grounding-failures-dev',
+        NewStateValue: 'ALARM',
+        OldStateValue: 'OK',
+        NewStateReason: 'Threshold Crossed: 1 datapoint [25.0] was greater than the threshold (10.0).',
+        StateChangeTime: '2026-09-14T12:43:46.000Z',
+      },
+      'crudo',
+    );
+    expect(subject).toBe('Preguntale a El País — pelp-grounding-failures-dev en alarma');
+    // 12:43 UTC son las 09:43 en Montevideo: era justo lo que confundía en el correo original.
+    expect(body).toContain('09:43');
+    expect(body).toContain('hora de Montevideo');
+    expect(body).toContain('saltó');
+    expect(body).not.toContain('12:43');
+  });
+
+  it('reenvía tal cual lo que no sea una alarma, antes que perderlo', () => {
+    const { body } = buildMail({}, 'un aviso suelto');
+    expect(body).toBe('un aviso suelto');
   });
 });
