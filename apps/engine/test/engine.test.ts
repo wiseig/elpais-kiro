@@ -318,6 +318,8 @@ describe('saludos', () => {
     expect(result.httpStatus).toBe(200);
     const text = result.answer.blocks[0];
     expect(text && text.type === 'text' ? text.text : '').toContain('asistente de El País');
+    // Marcado como saludo: sin esto el front lo mostraba con el badge "Sin cobertura".
+    expect(result.answer.kind).toBe('greeting');
     // Ni búsqueda ni modelo: un saludo no es una consulta.
     expect(retriever.calls).toHaveLength(0);
     expect(models.calls).toHaveLength(0);

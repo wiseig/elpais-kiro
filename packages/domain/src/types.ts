@@ -72,6 +72,11 @@ export interface Answer {
   conversationId: string;
   blocks: AnswerBlock[];
   hadCoverage: boolean;
+  /**
+   * Qué clase de respuesta es. Un saludo no es una consulta al corpus: sin esto el front lo
+   * marcaba "Sin cobertura", que es cierto y no significa nada, como si le hubiéramos fallado.
+   */
+  kind?: 'answer' | 'greeting';
   personalized: boolean;
   /** "Por qué veo esto", en lenguaje llano. Solo cuando personalized = true. */
   explain?: string;

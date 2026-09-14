@@ -633,6 +633,7 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
         conversationId: conversation.convId,
         blocks,
         hadCoverage: false,
+        kind: 'greeting',
         personalized: false,
         latencyMs: Date.now() - startedAt,
       },

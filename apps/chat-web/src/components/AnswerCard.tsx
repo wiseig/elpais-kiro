@@ -71,11 +71,14 @@ export function AnswerCard({ answer, api, busy, onSuggestion, onConsentRequired 
   const [onlyBlock] = blocks;
   const onlyNoticeCode: NoticeCode | undefined =
     blocks.length === 1 && onlyBlock?.type === 'notice' ? onlyBlock.code : undefined;
-  const showFeedback = !onlyNoticeCode || !NOTICE_CODES_WITHOUT_FEEDBACK.has(onlyNoticeCode);
+  const showFeedback = (!onlyNoticeCode || !NOTICE_CODES_WITHOUT_FEEDBACK.has(onlyNoticeCode)) && answer.kind !== 'greeting';
 
   // El badge "Sin cobertura" es para respuestas sobre la actualidad sin notas: cuando la
   // respuesta es solo un aviso (fuera de tema, bloqueada, pausa) el aviso ya lo explica.
-  const showNoCoverageBadge = !hadCoverage && !showNoCoverageBanner && !onlyNoticeCode;
+  // Un saludo no es una respuesta sobre la actualidad: no lleva badge, ni el destaque de las
+  // sugerencias, ni "¿Te sirvió?". No le fallamos a nadie, solo saludamos.
+  const isGreeting = answer.kind === 'greeting';
+  const showNoCoverageBadge = !hadCoverage && !showNoCoverageBanner && !onlyNoticeCode && !isGreeting;
 
   function trackSource(url: string) {
     api.postEvent({ type: 'SourceClicked', answerId: answer.answerId, url }).catch(() => undefined);
@@ -147,7 +150,7 @@ export function AnswerCard({ answer, api, busy, onSuggestion, onConsentRequired 
       case 'suggestions':
         if (block.items.length === 0) return null;
         return (
-          <div className={hadCoverage ? 'answer-suggestions' : 'answer-suggestions answer-suggestions--prominent'} key={index}>
+          <div className={hadCoverage || isGreeting ? 'answer-suggestions' : 'answer-suggestions answer-suggestions--prominent'} key={index}>
             <p className="chips-title">Seguí preguntando</p>
             <div className="chips">
               {block.items.map((question) => (
