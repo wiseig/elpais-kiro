@@ -309,6 +309,30 @@ describe('preguntas del día con notas viejas', () => {
   });
 });
 
+describe('saludos', () => {
+  it('contesta la bienvenida con sugerencias y sin tocar el corpus', async () => {
+    const { deps, store, models, retriever } = buildDeps({});
+    await consented(deps);
+    const result = await askQuestion(deps, inbound('buenas buenas'));
+
+    expect(result.httpStatus).toBe(200);
+    const text = result.answer.blocks[0];
+    expect(text && text.type === 'text' ? text.text : '').toContain('asistente de El País');
+    // Ni búsqueda ni modelo: un saludo no es una consulta.
+    expect(retriever.calls).toHaveLength(0);
+    expect(models.calls).toHaveLength(0);
+    // Y no entra al registro de preguntas: contarlo como "sin cobertura" ensuciaba los huecos.
+    expect(await store.listQuestionLogs('2026-09-11')).toHaveLength(0);
+  });
+
+  it('un saludo con pregunta adentro sigue el camino normal', async () => {
+    const { deps, retriever } = buildDeps({});
+    await consented(deps);
+    await askQuestion(deps, inbound('hola, ¿qué pasó con los trabajadores del Frigorífico Tacuarembó?'));
+    expect(retriever.calls).toHaveLength(1);
+  });
+});
+
 describe('interruptor de canales', () => {
   it('un canal apagado en el registro no contesta', async () => {
     const { deps, store } = buildDeps({});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_INTENT_WORDS, addDays, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
+import { DEFAULT_INTENT_WORDS, addDays, isGreeting, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
 import { isUlid, ulid, ulidTime } from '../src/ulid';
 import { hasMetaTalk, isAllowedUrl, startsWithNoCoverage, validateAnswerText, withoutClosingInvitation } from '../src/validators';
 import { questionHash } from '../src/node';
@@ -223,5 +223,24 @@ describe('withoutClosingInvitation', () => {
     expect(withoutClosingInvitation('Una nota de El País dice que subió el boleto.')).toBe('Una nota de El País dice que subió el boleto.');
     expect(withoutClosingInvitation('El País no publicó sobre esto en los últimos días.')).toBe('El País no publicó sobre esto en los últimos días.');
     expect(withoutClosingInvitation('Podés leer la nota completa en El País.')).toBe('Podés leer la nota completa en El País.');
+  });
+});
+
+describe('isGreeting', () => {
+  it('reconoce el saludo suelto', () => {
+    for (const text of ['hola', 'Hola!', 'buenas', 'buenas buenas', '¿Cómo va?', 'buen día', 'Buenas tardes', 'que tal', 'Hey']) {
+      expect(isGreeting(text), text).toBe(true);
+    }
+  });
+
+  it('un saludo con pregunta adentro se responde normal', () => {
+    for (const text of ['hola, ¿qué pasó en el puerto?', 'buenas, contame del dólar', '¿Cómo va el conflicto portuario?']) {
+      expect(isGreeting(text), text).toBe(false);
+    }
+  });
+
+  it('sale de la configuración, como el resto de las listas', () => {
+    expect(isGreeting('qué hacele')).toBe(false);
+    expect(isGreeting('qué hacele', { ...DEFAULT_INTENT_WORDS, greetings: [...DEFAULT_INTENT_WORDS.greetings, 'que hacele'] })).toBe(true);
   });
 });

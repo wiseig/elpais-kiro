@@ -26,6 +26,14 @@ const AMBIGUOUS_PRONOUNS =
  * palabras y el modelo liviano inventaba tema ("Valentina Cancela" → "qué dijo Valentina
  * Cancela sobre el presupuesto", 13/9/2026). Los temas sueltos los arma el motor.
  */
+/**
+ * La pregunta solo se entiende con el turno anterior ("¿Y en Uruguay?", "¿y eso?"). No sirve para
+ * ofrecerla suelta: en la portada o en la bienvenida queda como un chiste interno.
+ */
+export function isFollowUp(question: string): boolean {
+  return AMBIGUOUS_PRONOUNS.test(question.trim());
+}
+
 export function needsRewrite(question: string, hasHistory: boolean): boolean {
   if (hasHistory) return true;
   return AMBIGUOUS_PRONOUNS.test(question.trim());
@@ -71,6 +79,8 @@ export interface IntentWords {
   digestFiller: readonly string[];
   /** Secciones del diario que el lector puede pedir por su nombre. */
   digestSections: readonly DigestSection[];
+  /** Saludos: cuando el mensaje es solo esto, se contesta con una bienvenida y sugerencias. */
+  greetings: readonly string[];
 }
 
 /** Una sección del diario: cómo la nombra el lector y qué categorías del corpus le tocan. */
@@ -134,6 +144,11 @@ export const DEFAULT_INTENT_WORDS: IntentWords = {
     'saber', 'contar', 'importante', 'ultimo', 'ultima', 'ultimos', 'ultimas', 'general', 'principales', 'principal',
   ],
   digestSections: DEFAULT_DIGEST_SECTIONS,
+  greetings: [
+    'hola', 'holis', 'ola', 'buenas', 'buenas buenas', 'buen dia', 'buenos dias', 'buenas tardes', 'buenas noches',
+    'que tal', 'que hacés', 'que haces', 'como va', 'como andas', 'como anda', 'como estas', 'como te va', 'todo bien',
+    'hey', 'saludos', 'ey', 'buenass',
+  ],
 };
 
 function escapeRegex(text: string): string {
@@ -168,12 +183,12 @@ export function wordListRegex(words: readonly string[], all = false): RegExp | u
  * palabras que no son tema. Si sobra algo, el lector preguntó por un asunto concreto: "qué está
  * pasando en el puerto" no es un panorama, "qué está pasando esta tarde en Uruguay" sí.
  */
-function leftoverTopic(text: string, words: IntentWords): string[] {
+function leftoverTopic(text: string, words: IntentWords, lists: readonly (readonly string[])[]): string[] {
   // Los verbos de pedido tampoco son tema: si alguien agrega "tirame" a la lista de marcadores,
   // "tirame las noticias de hoy" tiene que seguir siendo un panorama.
   const filler = new Set([...words.digestFiller, ...words.questionMarkers].map((word) => foldAccents(word)));
   let rest = text;
-  for (const list of [words.digestWords, words.digestToday, words.digestStandalone]) {
+  for (const list of lists) {
     const regex = wordListRegex(list, true);
     if (regex) rest = rest.replace(regex, ' ');
   }
@@ -182,13 +197,25 @@ function leftoverTopic(text: string, words: IntentWords): string[] {
     .filter((word) => word.length >= 4 && !filler.has(word));
 }
 
+/**
+ * "hola", "buenas buenas", "cómo va?": el mensaje es solo un saludo. Contestarle "El País no
+ * publicó sobre 'hola'" es lo peor que puede hacer un asistente en su primer turno. Un saludo con
+ * pregunta adentro ("hola, ¿qué pasó en el puerto?") no cuenta: eso se responde normal.
+ */
+export function isGreeting(text: string, words: IntentWords = DEFAULT_INTENT_WORDS): boolean {
+  const folded = foldAccents(text);
+  if (!folded.trim()) return false;
+  if (!wordListRegex(words.greetings)?.test(folded)) return false;
+  return leftoverTopic(folded, words, [words.greetings, words.digestWords, words.digestToday]).length === 0;
+}
+
 export function isDigestRequest(question: string, words: IntentWords = DEFAULT_INTENT_WORDS): boolean {
   const text = foldAccents(question);
   // El nombre de una sección ya es el pedido completo: "resumen de judiciales", "policiales".
   if (digestSection(question, words)) return true;
   const digest = wordListRegex(words.digestWords);
   if (!digest?.test(text)) return false;
-  if (leftoverTopic(text, words).length > 0) return false;
+  if (leftoverTopic(text, words, [words.digestWords, words.digestToday, words.digestStandalone]).length > 0) return false;
   if (wordListRegex(words.digestToday)?.test(text)) return true;
   const standalone = wordListRegex(words.digestStandalone);
   if (!standalone?.test(text)) return false;

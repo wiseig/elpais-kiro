@@ -1,5 +1,5 @@
 import type { Config, CorpusIndexRecord, QuestionLogRecord, SourceItem } from '@pelp/domain';
-import { daysAgo, lastDays, montevideoDay, normalizeQuestion } from '@pelp/domain';
+import { daysAgo, isFollowUp, lastDays, montevideoDay, normalizeQuestion } from '@pelp/domain';
 import type { SuggestionCard, SuggestionsResponse } from '@pelp/domain/api';
 import { GOLDEN_SET } from '@pelp/testing';
 import type { Store } from './store';
@@ -86,6 +86,7 @@ export async function suggestionCards(store: Store, config: Config, now: Date, t
     for (const log of logs) {
       if (!log.hadCoverage || log.blocked || !log.sources.length) continue;
       if (control.has(normalizeQuestion(log.questionMasked))) continue;
+      if (isFollowUp(log.questionMasked)) continue;
       const entry = counts.get(log.qnormHash) ?? { count: 0, log };
       entry.count += 1;
       counts.set(log.qnormHash, entry);
@@ -143,6 +144,8 @@ export async function suggestions(store: Store, config: Config, now: Date, ttlMs
     for (const log of logs) {
       if (!log.hadCoverage || log.blocked || !log.questionMasked) continue;
       if (control.has(normalizeQuestion(log.questionMasked))) continue;
+      // Una repregunta ofrecida suelta no se entiende: "¿Y en Uruguay?" sin el turno anterior.
+      if (isFollowUp(log.questionMasked)) continue;
       // Solo trascienden las preguntas que se apoyan en notas de la ventana de frescura.
       if (!log.sources.some((source) => source.date >= fresh)) continue;
       const entry = counts.get(log.qnormHash) ?? { count: 0, sample: log.questionMasked };

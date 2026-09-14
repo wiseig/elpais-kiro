@@ -25,6 +25,7 @@ import {
   digestSection,
   hourKey,
   isDigestRequest,
+  isGreeting,
   montevideoDay,
   needsRewrite,
   normalizeQuestion,
@@ -384,6 +385,7 @@ function intentWords(config: Config): IntentWords {
     digestMaxWords: intents.digest.maxWords,
     digestFiller: intents.digest.filler,
     digestSections: intents.digest.sections,
+    greetings: intents.greetings,
   };
 }
 
@@ -615,9 +617,32 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
     return blockedNotice(deps, { config, reader, inbound, question: masked, kind: 'blocked_word', text: CANNED.blocked, code: 'blocked', day, startedAt, calls: [] });
   }
 
+  const intents = intentWords(config);
+  // Un saludo suelto no es una consulta al corpus. Antes caía en la búsqueda y volvía como "El
+  // País no publicó sobre 'hola'", que es el peor primer turno posible. Se contesta acá, sin
+  // gastar un modelo y sin ensuciar la cobertura con una pregunta que nadie hizo.
+  if (isGreeting(masked, intents)) {
+    deps.log.metric('Greeting', 1);
+    const items = await suggestions(deps.store, config, now).catch(() => [] as string[]);
+    const blocks: AnswerBlock[] = [{ type: 'text', text: config.intents.greetingReply }];
+    if (items.length) blocks.push({ type: 'suggestions', items: items.slice(0, 4) });
+    const conversation = await loadConversation(deps, reader, inbound, now);
+    return {
+      answer: {
+        answerId: ulid(now.getTime()),
+        conversationId: conversation.convId,
+        blocks,
+        hadCoverage: false,
+        personalized: false,
+        latencyMs: Date.now() - startedAt,
+      },
+      httpStatus: 200,
+      reader,
+    };
+  }
+
   // Los temas sueltos se convierten en pregunta antes de clasificar: el clasificador marcaba
   // "FMED" o "Valentina Cancela" como fuera de alcance por no tener forma de pregunta.
-  const intents = intentWords(config);
   const scoped = asExplicitQuestion(masked, intents);
 
   const calls: ModelCall[] = [];

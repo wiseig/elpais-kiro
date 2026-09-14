@@ -74,6 +74,8 @@ interface GuardrailsForm {
   digestTodayText: string;
   digestStandaloneText: string;
   digestFillerText: string;
+  greetingsText: string;
+  greetingReply: string;
   digestMaxWords: number;
   digestNotes: number;
   digestSkipText: string;
@@ -112,6 +114,8 @@ function formFromConfig(config: Config): GuardrailsForm {
     digestTodayText: toLines(config.intents.digest.today),
     digestStandaloneText: toLines(config.intents.digest.standalone),
     digestFillerText: toLines(config.intents.digest.filler),
+    greetingsText: toLines(config.intents.greetings),
+    greetingReply: config.intents.greetingReply,
     digestMaxWords: config.intents.digest.maxWords,
     digestNotes: config.intents.digest.notes,
     digestSkipText: toLines(config.intents.digest.skipSections),
@@ -135,6 +139,8 @@ function mergeConfig(base: Config, form: GuardrailsForm): Config {
     intents: {
       questionMarkers: fromLines(form.questionMarkersText),
       topicMaxWords: form.topicMaxWords,
+      greetings: fromLines(form.greetingsText),
+      greetingReply: form.greetingReply,
       digest: {
         words: fromLines(form.digestWordsText),
         today: fromLines(form.digestTodayText),
@@ -371,6 +377,19 @@ export default function GuardrailsPage() {
               />
             </Field>
 
+            <div className="form-grid__full">
+              <Field
+                label="Saludos"
+                hint="Uno por línea. Cuando el mensaje es solo esto, se contesta con la bienvenida de abajo y sugerencias, sin buscar en las notas. Un saludo con pregunta adentro («hola, ¿qué pasó en el puerto?») se responde normal."
+              >
+                <textarea className="input" rows={4} value={form.greetingsText} onChange={(event) => set('greetingsText', event.target.value)} />
+              </Field>
+            </div>
+            <div className="form-grid__full">
+              <Field label="Mensaje de bienvenida" hint="Lo que recibe quien solo saluda.">
+                <textarea className="input" rows={3} value={form.greetingReply} onChange={(event) => set('greetingReply', event.target.value)} />
+              </Field>
+            </div>
             <div className="form-grid__full">
               <Field
                 label="Palabras de panorama"

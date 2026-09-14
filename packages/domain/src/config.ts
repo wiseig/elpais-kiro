@@ -169,6 +169,15 @@ export const ConfigSchema = z.object({
       questionMarkers: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.questionMarkers]),
       /** Hasta cuántas palabras se envuelve como tema ("¿Qué publicó El País sobre X?"). */
       topicMaxWords: z.number().int().min(1).max(20).default(DEFAULT_INTENT_WORDS.topicMaxWords),
+      /** Saludos sueltos: se contestan con una bienvenida y sugerencias, sin gastar una consulta. */
+      greetings: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.greetings]),
+      /** El texto de esa bienvenida. */
+      greetingReply: z
+        .string()
+        .default(
+          'Hola. Soy el asistente de El País: contesto con notas publicadas por el diario. Preguntame por un tema, ' +
+            'una persona o pedime el panorama del día.',
+        ),
       digest: z
         .object({
           words: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.digestWords]),
