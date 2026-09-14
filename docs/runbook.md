@@ -16,6 +16,54 @@ Notas sobre la ingestión: Bedrock rechaza sidecars con atributos vacíos (se om
 8. Smoke: `node scripts/smoke.mjs <ApiUrl>` corre las preguntas del set dorado y mide p95.
 9. Confirmar en la consola que la Knowledge Base usa **S3 Vectors** (sección 5.4). Si S3 Vectors no estuviera disponible en la cuenta, frenar: no crear OpenSearch Serverless sin aprobación (sección 19).
 
+## 1 bis. Primer despliegue a producción
+
+Producción no existe todavía: no hay ningún stack `pelp-*-prod` en la cuenta. Lo de abajo es el
+orden para levantarla, y los cuatro primeros puntos son requisitos, no recomendaciones. El CDK
+crea los secretos con plantillas `PLACEHOLDER`, así que un despliegue sin ellos deja la
+infraestructura en pie y el producto roto: el corpus no sincroniza y el motor no llega a la API de
+Daily Brief. Pasó en dev y costó un día de diagnóstico.
+
+**Antes de desplegar**
+
+1. **Legales.** Aprobación del texto de consentimiento (Apéndice A). Es lo que ve el lector antes
+   de la primera pregunta y no se puede cambiar sin versionar (paso 9 de esta guía).
+2. **Credenciales.** El usuario de servicio `pelp-service@elpais.com.uy` tiene que existir en el
+   pool de Daily Brief, en el grupo `admin` y sin desafío pendiente, y hay que tener a mano la URL
+   del feed con su token.
+3. **`.env.prod`.** `PELP_ALERT_EMAIL` con el destino de las alarmas y `PELP_ALLOWED_ORIGIN` con el
+   dominio desde el que se sirve el chat (en dev es `*`; en producción no debería serlo).
+4. **Canales.** Decidir si WhatsApp arranca. Si no está verificado el número de negocio, va
+   deshabilitado en `config.personalization.channels` y en el registro de canales; el webhook se
+   puede levantar igual y prenderlo después.
+
+**Despliegue**
+
+5. `./scripts/deploy.sh --all prod`. Los recursos quedan con `removalPolicy: RETAIN`: no se borran
+   solos ni al destruir el stack (paso 10).
+6. Cargar los tres secretos del paso 2 con `pelp/prod/...`. Verificar que ninguno quedó en
+   `PLACEHOLDER`: `aws secretsmanager get-secret-value --secret-id pelp/prod/feed --profile dailybrief`.
+7. Sembrar la config y **dejar el servicio apagado** hasta terminar el corpus:
+   backoffice › Configuración › kill switch, o `service.enabled: false` en la semilla.
+8. Crear la primera cuenta del backoffice en el pool propio de producción (paso 6 bis); el pool
+   nace vacío y sin usuarios nadie entra.
+9. Corpus inicial y ventana de retención (pasos 1.7 y 7 bis). Recién con el corpus indexado,
+   prender el servicio.
+10. Smoke contra la URL de producción y revisar Inicio: cobertura, latencia y costo del día.
+
+**Cosas que ya nos mordieron y conviene mirar**
+
+- Cambiar una versión de prompt o agregar un bloque a la configuración exige desplegar **todos** los
+  bundles que lo usan, no solo el motor: el reporte de sesgo reventó con «Prompt adaptation@v2 no
+  existe» hasta desplegar `jobs`, y el backoffice devolvía la config sin el bloque nuevo hasta
+  desplegar `backoffice`.
+- Tocar el authorizer de la admin-api no alcanza: el stage de API Gateway sirve una foto y hay que
+  volver a desplegarlo. El `addToLogicalId` del deployment ya lo fuerza, pero si aparece un 401
+  sistemático después de un cambio de pool, mirar ahí primero.
+- Las suscripciones de las listas de correo (redacción y alarmas) nacen vacías. Cargarlas desde
+  backoffice › Listas de correo, y confirmar el mail que manda AWS: hasta que alguien no acepta, no
+  recibe nada.
+
 ## 2. Secretos (los carga una persona, nunca el código)
 
 | Secreto | Contenido | Quién lo usa |
