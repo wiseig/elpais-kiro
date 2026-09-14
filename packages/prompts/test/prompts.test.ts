@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildAdaptationUserMessage,
+  buildPoliticalContext,
+  getProfilerPrompt,
   buildCanonicalUserMessage,
   getCanonicalStrictSuffix,
   getOffTopicPrompt,
@@ -164,11 +166,30 @@ describe('prompts versionados', () => {
     expect(v3).toMatchSnapshot();
   });
 
+  it('el perfilador v2 recibe el contexto y prohíbe inferir por temas', () => {
+    const contexto = buildPoliticalContext({
+      enabled: true,
+      government: 'Coalición X desde 2025.',
+      parties: ['Partido A (PA)', 'Partido B'],
+      figures: ['Presidencia: Fulano'],
+      notes: '',
+    });
+    expect(contexto).toContain('<CONTEXTO_URUGUAY>');
+    const v2 = getProfilerPrompt('v2', contexto);
+    expect(v2).toContain('Coalición X desde 2025.');
+    expect(v2).toContain('Nombrar a una figura, un partido o el gobierno NO es una postura');
+    expect(v2).toContain('consultar por sindicatos, agro, inversiones o políticas sociales no dice nada');
+    // El contexto apagado no filtra nada al prompt.
+    expect(buildPoliticalContext({ enabled: false, government: 'X', parties: [], figures: [], notes: '' })).toBe('');
+    expect(getProfilerPrompt('v2', '')).not.toContain('CONTEXTO_URUGUAY');
+  });
+
   it('versiones desconocidas fallan explícitamente', () => {
     expect(() => getPrompt('canonical', 'v99')).toThrow();
     expect(listPromptVersions().canonical).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']);
     expect(listPromptVersions().rewrite).toEqual(['v1', 'v2', 'v3']);
     expect(listPromptVersions().adaptation).toEqual(['v1', 'v2', 'v3']);
+    expect(listPromptVersions().profiler).toEqual(['v1', 'v2']);
     expect(listPromptVersions().offTopic).toEqual(['v1', 'v2']);
   });
 

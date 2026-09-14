@@ -69,6 +69,25 @@ export const ConfigSchema = z.object({
     channels: z.array(z.string()),
     adaptationModel: modelId,
     verifierModel: modelId,
+    /**
+     * Contexto político uruguayo para el perfilador. No cambia la BASE de la inferencia —sigue
+     * siendo solo lo que el lector dice explícitamente— sino la capacidad del modelo de entender
+     * de qué le están hablando: sin saber quién gobierna, "¿por qué insisten con el presupuesto?"
+     * es una pregunta cualquiera. Se edita desde el backoffice porque esto envejece.
+     */
+    politicalContext: z
+      .object({
+        enabled: z.boolean().default(true),
+        /** Quién gobierna hoy y desde cuándo, en una o dos líneas. */
+        government: z.string().default(''),
+        /** Partidos y coaliciones, con las formas en que la gente los nombra. */
+        parties: z.array(z.string()).default([]),
+        /** Cargos y figuras que aparecen seguido. Envejece rápido: revisar cada tanto. */
+        figures: z.array(z.string()).default([]),
+        /** Cualquier aclaración extra para el modelo. */
+        notes: z.string().default(''),
+      })
+      .default({}),
     autoLowered: z.boolean(),
     /**
      * Cuánto tolera el reporte de sesgo antes de bajar la intensidad. Exigir cero divergencias
@@ -272,6 +291,8 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       channels: ['web'],
       adaptationModel: DEFAULT_MODEL_LIGHT,
       verifierModel: DEFAULT_MODEL_LIGHT,
+      // Se siembra vacío a propósito: los nombres los carga la redacción, que sabe y mantiene.
+      politicalContext: { enabled: true, government: '', parties: [], figures: [], notes: '' },
       autoLowered: false,
       lastCleanIntensity: 0,
       profileEveryQuestions: 5,

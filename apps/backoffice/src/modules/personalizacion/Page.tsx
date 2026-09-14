@@ -16,7 +16,7 @@ import { DaysSelector } from '../../shared/components/Tabs';
 import { Empty } from '../../shared/components/Empty';
 import { Notice, useNotice } from '../../shared/components/Notice';
 import { VerdictView } from '../../shared/components/Verdict';
-import { fmtDateTime, fmtDay, fmtInt, fmtNumber, fmtPercent, fmtUsd, truncate } from '../../shared/format';
+import { fmtDateTime, fmtDay, fmtInt, fmtNumber, fmtPercent, fmtUsd, fromLines, toLines, truncate } from '../../shared/format';
 
 type Personalization = Config['personalization'];
 type Axis = keyof Personalization['dimensions'];
@@ -206,6 +206,8 @@ export default function PersonalizacionPage() {
   const level = intensityLevel(form?.intensity ?? 0);
 
   const set = <K extends keyof Personalization>(key: K, value: Personalization[K]) => setForm((f) => (f ? { ...f, [key]: value } : f));
+  const setPolitical = <K extends keyof Personalization['politicalContext']>(key: K, value: Personalization['politicalContext'][K]) =>
+    setForm((f) => (f ? { ...f, politicalContext: { ...f.politicalContext, [key]: value } } : f));
   const setDim = (axis: Axis, value: number) => setForm((f) => (f ? { ...f, dimensions: { ...f.dimensions, [axis]: value } } : f));
 
   const applyResult = (result: ConfigSaveResult, success: (response: ConfigResponse) => string) => {
@@ -371,6 +373,50 @@ export default function PersonalizacionPage() {
               </Field>
               <div>
                 <Toggle checked={form.requireConsent} onChange={(next) => set('requireConsent', next)} label="Requiere consentimiento explícito" />
+              </div>
+            </div>
+          </Card>
+
+          <Card
+            title="Contexto político del Uruguay"
+            description="Lo que el perfilador necesita saber para entender de qué le hablan. No cambia en qué se basa la inferencia: la orientación política se sigue infiriendo solo de posturas que el lector expresa con sus propias palabras, que es lo que dice el texto de consentimiento. Nombrar a alguien o preguntar por un tema no cuenta."
+          >
+            <div className="form-grid">
+              <div className="form-grid__full">
+                <Toggle
+                  checked={form.politicalContext.enabled}
+                  onChange={(next) => setPolitical('enabled', next)}
+                  label="Pasarle este contexto al perfilador"
+                />
+              </div>
+              <div className="form-grid__full">
+                <Field label="Gobierno actual" hint="Una o dos líneas: quién gobierna y desde cuándo.">
+                  <textarea
+                    className="input"
+                    rows={2}
+                    value={form.politicalContext.government}
+                    onChange={(event) => setPolitical('government', event.target.value)}
+                    placeholder="Ej.: gobierna la coalición X desde marzo de 2025."
+                  />
+                </Field>
+              </div>
+              <div className="form-grid__full">
+                <Field label="Partidos y coaliciones" hint="Uno por línea, con las formas en que la gente los nombra y sus siglas.">
+                  <textarea className="input" rows={5} value={toLines(form.politicalContext.parties)} onChange={(event) => setPolitical('parties', fromLines(event.target.value))} />
+                </Field>
+              </div>
+              <div className="form-grid__full">
+                <Field
+                  label="Figuras y cargos"
+                  hint="Uno por línea. Esto envejece rápido: conviene revisarlo cuando cambia un ministro o arranca una campaña."
+                >
+                  <textarea className="input" rows={5} value={toLines(form.politicalContext.figures)} onChange={(event) => setPolitical('figures', fromLines(event.target.value))} />
+                </Field>
+              </div>
+              <div className="form-grid__full">
+                <Field label="Aclaraciones" hint="Cualquier cosa que le sirva al modelo para no confundirse.">
+                  <textarea className="input" rows={3} value={form.politicalContext.notes} onChange={(event) => setPolitical('notes', event.target.value)} />
+                </Field>
               </div>
             </div>
           </Card>

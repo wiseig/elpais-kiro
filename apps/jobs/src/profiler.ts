@@ -1,7 +1,7 @@
 import type { Config, ModelCall, PoliticalBucket, ReaderProfile, ReaderRecord, WeightedId } from '@pelp/domain';
 import { FRAME_IDS, NON_POLITICAL_FRAME_IDS, montevideoDay } from '@pelp/domain';
 import { costUsd, parseJsonObject } from '@pelp/bedrock';
-import { buildProfilerUserMessage, getPrompt, type ProfilerEvidence } from '@pelp/prompts';
+import { buildPoliticalContext, buildProfilerUserMessage, getProfilerPrompt, type ProfilerEvidence } from '@pelp/prompts';
 import { logger, readerMode, type EngineDeps } from '@pelp/engine/core';
 import { runtime } from './lib/runtime';
 
@@ -122,7 +122,7 @@ export async function profileReader(deps: EngineDeps, reader: ReaderRecord, conf
   const model = config.answering.queryRewrite.model;
   const result = await deps.models.converse({
     modelId: model,
-    system: getPrompt('profiler', config.prompts.profiler),
+    system: getProfilerPrompt(config.prompts.profiler, buildPoliticalContext(config.personalization.politicalContext)),
     userText: buildProfilerUserMessage(evidence),
     maxTokens: 800,
     temperature: 0,
