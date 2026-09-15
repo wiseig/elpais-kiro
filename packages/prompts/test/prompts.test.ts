@@ -184,12 +184,28 @@ describe('prompts versionados', () => {
     expect(getProfilerPrompt('v2', '')).not.toContain('CONTEXTO_URUGUAY');
   });
 
+  it('el perfilador v3 escribe la rama positiva que faltaba', () => {
+    const v3 = getProfilerPrompt('v3', '');
+    expect(v3).toContain('Si contaste 5 o más, ubicalo en el eje');
+    expect(v3).toContain('La confianza mide la evidencia, no tu comodidad');
+    // Las salvaguardas siguen intactas.
+    expect(v3).toContain('NUNCA a partir\n  de los temas o encuadres que consulta');
+    expect(v3).toContain('Nombrar a una figura, un partido o el gobierno NO es una postura');
+  });
+
+  it('el perfilador v4 distingue la posición del lector del sujeto que critica', () => {
+    const v4 = getProfilerPrompt('v4', '');
+    expect(v4).toContain('Si critica a la izquierda, el lector no es de izquierda');
+    expect(v4).toContain('¿desde dónde lo dice?');
+    expect(v4).toContain('Si contaste 5 o más, ubicalo en el eje');
+  });
+
   it('versiones desconocidas fallan explícitamente', () => {
     expect(() => getPrompt('canonical', 'v99')).toThrow();
     expect(listPromptVersions().canonical).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']);
     expect(listPromptVersions().rewrite).toEqual(['v1', 'v2', 'v3']);
     expect(listPromptVersions().adaptation).toEqual(['v1', 'v2', 'v3']);
-    expect(listPromptVersions().profiler).toEqual(['v1', 'v2']);
+    expect(listPromptVersions().profiler).toEqual(['v1', 'v2', 'v3', 'v4']);
     expect(listPromptVersions().offTopic).toEqual(['v1', 'v2']);
   });
 

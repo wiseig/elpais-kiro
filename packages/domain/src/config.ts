@@ -70,6 +70,12 @@ export const ConfigSchema = z.object({
     adaptationModel: modelId,
     verifierModel: modelId,
     /**
+     * Modelo del perfilador. Venía pegado al de la reescritura por herencia, así que no se podía
+     * tocar uno sin el otro; y ubicar a alguien en un eje político a partir de lo que escribió es
+     * bastante más difícil que reescribir una repregunta.
+     */
+    profilerModel: modelId.default('us.amazon.nova-lite-v1:0'),
+    /**
      * Contexto político uruguayo para el perfilador. No cambia la BASE de la inferencia —sigue
      * siendo solo lo que el lector dice explícitamente— sino la capacidad del modelo de entender
      * de qué le están hablando: sin saber quién gobierna, "¿por qué insisten con el presupuesto?"
@@ -300,6 +306,7 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       channels: ['web'],
       adaptationModel: DEFAULT_MODEL_LIGHT,
       verifierModel: DEFAULT_MODEL_LIGHT,
+      profilerModel: DEFAULT_MODEL_LIGHT,
       // Se siembra vacío a propósito: los nombres los carga la redacción, que sabe y mantiene.
       politicalContext: { enabled: true, government: '', parties: [], figures: [], notes: '' },
       autoLowered: false,

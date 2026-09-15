@@ -88,6 +88,16 @@ export function applyProfilerRules(json: ProfilerJson, previous: ReaderProfile, 
   const bucket = pick(lean?.bucket, BUCKETS, 'sin-señal');
   const onlyNonPolitical = frames.length > 0 && frames.every((frame) => NON_POLITICAL_FRAME_IDS.includes(frame.id));
   if (previous.consent.sensitiveInference) {
+    // Sin esto, cuando da "sin señal" no hay forma de saber si el modelo no vio posturas o si
+    // las vio y no llegó a la vara. Es la diferencia entre un umbral alto y algo roto.
+    logger.info('profiler.lean', {
+      readerId: previous.readerId,
+      bucket,
+      explicit,
+      confidence: leanConfidence,
+      onlyNonPolitical,
+      passes: bucket !== 'sin-señal' && explicit >= 5 && leanConfidence >= 0.7 && !onlyNonPolitical,
+    });
     if (bucket !== 'sin-señal' && explicit >= 5 && leanConfidence >= 0.7 && !onlyNonPolitical) {
       next.politicalLean = { score: Math.min(1, Math.max(-1, Number(lean?.score) || 0)), bucket, confidence: leanConfidence };
     } else {
@@ -119,7 +129,7 @@ export async function profileReader(deps: EngineDeps, reader: ReaderRecord, conf
   if (readerMode(reader) !== 'personalized') return undefined;
   const evidence = await evidenceFor(deps, reader);
   if (!evidence.questions.length) return undefined;
-  const model = config.answering.queryRewrite.model;
+  const model = config.personalization.profilerModel;
   const result = await deps.models.converse({
     modelId: model,
     system: getProfilerPrompt(config.prompts.profiler, buildPoliticalContext(config.personalization.politicalContext)),

@@ -10,6 +10,8 @@ import { ADAPTATION_SYSTEM_V3 } from './adaptation.v3';
 import { VERIFIER_SYSTEM_V1 } from './verifier.v1';
 import { PROFILER_SYSTEM_V1 } from './profiler.v1';
 import { profilerSystemV2 } from './profiler.v2';
+import { profilerSystemV3 } from './profiler.v3';
+import { profilerSystemV4 } from './profiler.v4';
 import { REWRITE_SYSTEM_V1 } from './rewrite.v1';
 import { REWRITE_SYSTEM_V2 } from './rewrite.v2';
 import { REWRITE_SYSTEM_V3 } from './rewrite.v3';
@@ -85,6 +87,8 @@ export function buildPoliticalContext(context: PoliticalContext | undefined): st
 const PROFILER_PROMPTS: Record<string, (context: string) => string> = {
   v1: () => PROFILER_SYSTEM_V1,
   v2: profilerSystemV2,
+  v3: profilerSystemV3,
+  v4: profilerSystemV4,
 };
 
 export function getProfilerPrompt(version: string, context: string): string {
