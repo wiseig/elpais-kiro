@@ -96,6 +96,37 @@ describe('tarjetas de sugerencias', () => {
     expect(cards.every((card) => card.kind !== 'trending')).toBe(true);
   });
 
+  it('ofrece las tendencias sin el diario de sujeto', async () => {
+    resetSuggestionsCache();
+    const { deps, store } = buildDeps();
+    const fresca = { title: 'Cancillería y Malvinas', url: 'https://www.elpais.com.uy/malvinas', date: '2026-09-11', section: 'informacion/politica' };
+    const log = {
+      convId: 'c1',
+      channel: 'web',
+      day: '2026-09-11',
+      questionNormalized: 'qué dice el país sobre cancillería y malvinas',
+      qnormHash: 'hash-malvinas',
+      hadCoverage: true,
+      personalized: false,
+      cached: false,
+      sources: [fresca],
+      canonicalAnswer: 'texto',
+      topics: [],
+      latencyMs: 10,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      costUsd: 0,
+      model: 'us.amazon.nova-pro-v1:0',
+      corpusVersion: 'v',
+      turn: 0,
+    };
+    const pregunta = '¿Qué dice El País sobre "Cancillería y Malvinas"?';
+    await store.putQuestionLog({ ...log, msgId: '01M2D0000000000000000000B1', at: '2026-09-11T10:00:00.000Z', questionMasked: pregunta });
+    await store.putQuestionLog({ ...log, msgId: '01M2D0000000000000000000B2', at: '2026-09-11T11:00:00.000Z', questionMasked: pregunta });
+    const items = await suggestions(store, testConfig(), deps.now());
+    expect(items).toContain('¿Qué se sabe sobre "Cancillería y Malvinas"?');
+    expect(items).not.toContain(pregunta);
+  });
+
   it('rearma la portada al cambiar el día aunque la caché siga caliente', async () => {
     resetSuggestionsCache();
     const { store } = buildDeps();

@@ -1,5 +1,5 @@
 import type { Config, CorpusIndexRecord, QuestionLogRecord, SourceItem } from '@pelp/domain';
-import { daysAgo, isFollowUp, lastDays, montevideoDay, normalizeQuestion } from '@pelp/domain';
+import { daysAgo, isFollowUp, lastDays, montevideoDay, neutralizeSourceFrame, normalizeQuestion } from '@pelp/domain';
 import type { SuggestionCard, SuggestionsResponse } from '@pelp/domain/api';
 import { GOLDEN_SET } from '@pelp/testing';
 import type { Store } from './store';
@@ -133,7 +133,9 @@ export async function suggestions(store: Store, config: Config, now: Date, ttlMs
       if (isFollowUp(log.questionMasked)) continue;
       // Solo trascienden las preguntas que se apoyan en notas de la ventana de frescura.
       if (!log.sources.some((source) => source.date >= fresh)) continue;
-      const entry = counts.get(log.qnormHash) ?? { count: 0, sample: log.questionMasked };
+      // La tendencia se ofrece con la redacción que el motor va a usar de verdad: si el lector
+      // escribió "¿Qué dice El País sobre…?", el chip no repite la forma que el guardrail castiga.
+      const entry = counts.get(log.qnormHash) ?? { count: 0, sample: neutralizeSourceFrame(log.questionMasked) };
       entry.count += 1;
       counts.set(log.qnormHash, entry);
     }
