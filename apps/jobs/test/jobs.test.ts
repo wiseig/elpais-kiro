@@ -84,32 +84,44 @@ describe('profiler', () => {
     expect(merged).toEqual([{ id: 'economia', weight: 0.8 }, { id: 'deportes', weight: 0.45 }]);
   });
 
-  it('no infiere orientación política desde encuadres no políticos ni sin 5 expresiones explícitas', () => {
-    const next = applyProfilerRules(
-      { topics: [{ id: 'deportes', weight: 1 }], frames: [{ id: 'deporte', weight: 1 }], politicalLean: { score: 0.8, bucket: 'derecha', confidence: 0.9, explicitStatements: 7 }, confidence: { topics: 0.9, frames: 0.9, style: 0.5 } },
+  it('la orientación sale de las posturas observadas, no de lo que el modelo etiqueta', () => {
+    const rechazaIzquierda = Array.from({ length: 5 }, (_, i) => ({
+      cita: `frase ${i}`,
+      objetivo: 'izquierda' as const,
+      postura: 'rechaza' as const,
+    }));
+
+    // El caso que el modelo devolvía invertido: quien rechaza a la izquierda queda a la derecha.
+    const derecha = applyProfilerRules({ frames: [{ id: 'seguridad', weight: 0.9 }] }, base, config, now, 12, rechazaIzquierda);
+    expect(derecha.politicalLean?.bucket).toBe('derecha');
+    expect(derecha.politicalLean?.score).toBe(1);
+
+    // Encuadres no políticos: no se infiere aunque haya posturas.
+    const soloDeporte = applyProfilerRules(
+      { topics: [{ id: 'deportes', weight: 1 }], frames: [{ id: 'deporte', weight: 1 }] },
       base,
       config,
       now,
       12,
+      rechazaIzquierda,
     );
-    expect(next.politicalLean).toEqual({ score: 0, bucket: 'sin-señal', confidence: 0 });
-    const withPolitics = applyProfilerRules(
-      { frames: [{ id: 'seguridad', weight: 0.9 }], politicalLean: { score: -0.5, bucket: 'centro-izquierda', confidence: 0.8, explicitStatements: 5 } },
-      base,
-      config,
-      now,
-      12,
-    );
-    expect(withPolitics.politicalLean?.bucket).toBe('centro-izquierda');
-    const few = applyProfilerRules({ frames: [{ id: 'seguridad', weight: 0.9 }], politicalLean: { score: -0.5, bucket: 'centro-izquierda', confidence: 0.8, explicitStatements: 3 } }, base, config, now, 12);
-    expect(few.politicalLean?.bucket).toBe('sin-señal');
-    expect(withPolitics.version).toBe(2);
-    expect(withPolitics.evidenceCount).toBe(12);
+    expect(soloDeporte.politicalLean).toEqual({ score: 0, bucket: 'sin-señal', confidence: 0 });
+
+    // Pocas posturas: no alcanza.
+    const pocas = applyProfilerRules({ frames: [{ id: 'seguridad', weight: 0.9 }] }, base, config, now, 12, rechazaIzquierda.slice(0, 3));
+    expect(pocas.politicalLean?.bucket).toBe('sin-señal');
+
+    // Sin posturas: tampoco.
+    const ninguna = applyProfilerRules({ frames: [{ id: 'seguridad', weight: 0.9 }] }, base, config, now, 12);
+    expect(ninguna.politicalLean?.bucket).toBe('sin-señal');
+    expect(derecha.version).toBe(2);
+    expect(derecha.evidenceCount).toBe(12);
   });
 
   it('sin consentimiento sensible nunca guarda orientación', () => {
     const noConsent = { ...base, consent: { ...base.consent, sensitiveInference: false } };
-    const next = applyProfilerRules({ frames: [{ id: 'seguridad', weight: 0.9 }], politicalLean: { score: 1, bucket: 'derecha', confidence: 1, explicitStatements: 9 } }, noConsent, config, now, 12);
+    const posturas = Array.from({ length: 6 }, () => ({ cita: 'x', objetivo: 'izquierda' as const, postura: 'rechaza' as const }));
+    const next = applyProfilerRules({ frames: [{ id: 'seguridad', weight: 0.9 }] }, noConsent, config, now, 12, posturas);
     expect(next.politicalLean).toBeUndefined();
   });
 

@@ -12,6 +12,7 @@ import { PROFILER_SYSTEM_V1 } from './profiler.v1';
 import { profilerSystemV2 } from './profiler.v2';
 import { profilerSystemV3 } from './profiler.v3';
 import { profilerSystemV4 } from './profiler.v4';
+import { stanceSystemV1 } from './stance.v1';
 import { REWRITE_SYSTEM_V1 } from './rewrite.v1';
 import { REWRITE_SYSTEM_V2 } from './rewrite.v2';
 import { REWRITE_SYSTEM_V3 } from './rewrite.v3';
@@ -20,9 +21,9 @@ import { offTopicSystemV1 } from './offtopic.v1';
 import { offTopicSystemV2 } from './offtopic.v2';
 import { BIAS_JUDGE_SYSTEM_V1 } from './bias-judge.v1';
 
-export type PromptKind = 'canonical' | 'adaptation' | 'verifier' | 'profiler' | 'rewrite' | 'offTopic' | 'biasJudge';
+export type PromptKind = 'canonical' | 'adaptation' | 'verifier' | 'profiler' | 'rewrite' | 'offTopic' | 'biasJudge' | 'stance';
 
-const STATIC_PROMPTS: Record<Exclude<PromptKind, 'offTopic'>, Record<string, string>> = {
+const STATIC_PROMPTS: Record<Exclude<PromptKind, 'offTopic' | 'stance'>, Record<string, string>> = {
   canonical: { v1: CANONICAL_SYSTEM_V1, v2: CANONICAL_SYSTEM_V2, v3: CANONICAL_SYSTEM_V3, v4: CANONICAL_SYSTEM_V4, v5: CANONICAL_SYSTEM_V5, v6: CANONICAL_SYSTEM_V6 },
   adaptation: { v1: ADAPTATION_SYSTEM_V1, v2: ADAPTATION_SYSTEM_V2, v3: ADAPTATION_SYSTEM_V3 },
   verifier: { v1: VERIFIER_SYSTEM_V1 },
@@ -51,7 +52,7 @@ const STRICT_SUFFIX: Record<string, string> = {
   v6: CANONICAL_STRICT_SUFFIX_V6,
 };
 
-export function getPrompt(kind: Exclude<PromptKind, 'offTopic'>, version: string): string {
+export function getPrompt(kind: Exclude<PromptKind, 'offTopic' | 'stance'>, version: string): string {
   const prompt = STATIC_PROMPTS[kind][version];
   if (!prompt) throw new Error(`Prompt ${kind}@${version} no existe`);
   return prompt;
@@ -97,6 +98,19 @@ export function getProfilerPrompt(version: string, context: string): string {
   return factory(context);
 }
 
+const STANCE_PROMPTS: Record<string, (context: string) => string> = { v1: stanceSystemV1 };
+
+export function getStancePrompt(version: string, context: string): string {
+  const factory = STANCE_PROMPTS[version];
+  if (!factory) throw new Error(`Prompt stance@${version} no existe`);
+  return factory(context);
+}
+
+/** Las preguntas del lector, numeradas, para que el clasificador pueda citarlas. */
+export function buildStanceUserMessage(questions: readonly { at: string; text: string }[]): string {
+  return `<PREGUNTAS_DEL_LECTOR>\n${questions.map((q, i) => `${i + 1}. ${q.text}`).join('\n')}\n</PREGUNTAS_DEL_LECTOR>`;
+}
+
 export function getDeniedTopicPrompt(version: string, topic: string): string {
   const factory = DENIED_TOPIC_PROMPTS[version];
   if (!factory) throw new Error(`Prompt deniedTopic@${version} no existe`);
@@ -113,6 +127,7 @@ export function listPromptVersions(): Record<PromptKind, string[]> {
     adaptation: Object.keys(STATIC_PROMPTS.adaptation),
     verifier: Object.keys(STATIC_PROMPTS.verifier),
     profiler: Object.keys(PROFILER_PROMPTS),
+    stance: Object.keys(STANCE_PROMPTS),
     rewrite: Object.keys(STATIC_PROMPTS.rewrite),
     offTopic: Object.keys(OFF_TOPIC_PROMPTS),
     biasJudge: Object.keys(STATIC_PROMPTS.biasJudge),

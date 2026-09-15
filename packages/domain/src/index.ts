@@ -3,6 +3,7 @@ export * from './config';
 export * from './keys';
 export * from './frames';
 export * from './normalize';
+export * from './stance';
 export * from './ulid';
 export * from './validators';
 export * from './records';

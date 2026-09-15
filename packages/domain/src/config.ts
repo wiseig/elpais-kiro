@@ -75,6 +75,12 @@ export const ConfigSchema = z.object({
      * bastante más difícil que reescribir una repregunta.
      */
     profilerModel: modelId.default('us.amazon.nova-lite-v1:0'),
+    /** Modelo del clasificador de posturas: una llamada corta y enfocada, aparte del perfil. */
+    stanceModel: modelId.default('us.amazon.nova-pro-v1:0'),
+    /** Posturas con señal que hacen falta antes de ubicar a alguien en el eje. */
+    stanceMinStatements: z.number().int().min(1).max(50).default(5),
+    /** Coherencia mínima entre esas posturas, de 0 a 1. */
+    stanceMinConfidence: z.number().min(0).max(1).default(0.7),
     /**
      * Contexto político uruguayo para el perfilador. No cambia la BASE de la inferencia —sigue
      * siendo solo lo que el lector dice explícitamente— sino la capacidad del modelo de entender
@@ -161,6 +167,7 @@ export const ConfigSchema = z.object({
     adaptation: z.string(),
     verifier: z.string(),
     profiler: z.string(),
+    stance: z.string().default('v1'),
     rewrite: z.string().default('v1'),
     offTopic: z.string().default('v2'),
     biasJudge: z.string().default('v1'),
@@ -307,6 +314,9 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       adaptationModel: DEFAULT_MODEL_LIGHT,
       verifierModel: DEFAULT_MODEL_LIGHT,
       profilerModel: DEFAULT_MODEL_LIGHT,
+      stanceModel: DEFAULT_MODEL_CANONICAL,
+      stanceMinStatements: 5,
+      stanceMinConfidence: 0.7,
       // Se siembra vacío a propósito: los nombres los carga la redacción, que sabe y mantiene.
       politicalContext: { enabled: true, government: '', parties: [], figures: [], notes: '' },
       autoLowered: false,

@@ -1,7 +1,7 @@
-import type { Config, ModelCall, PoliticalBucket, ReaderProfile, ReaderRecord, WeightedId } from '@pelp/domain';
-import { FRAME_IDS, NON_POLITICAL_FRAME_IDS, montevideoDay } from '@pelp/domain';
+import type { Config, ModelCall, ReaderProfile, ReaderRecord, Stance, WeightedId } from '@pelp/domain';
+import { FRAME_IDS, NON_POLITICAL_FRAME_IDS, isStance, montevideoDay, scoreStances } from '@pelp/domain';
 import { costUsd, parseJsonObject } from '@pelp/bedrock';
-import { buildPoliticalContext, buildProfilerUserMessage, getProfilerPrompt, type ProfilerEvidence } from '@pelp/prompts';
+import { buildPoliticalContext, buildProfilerUserMessage, buildStanceUserMessage, getProfilerPrompt, getStancePrompt, type ProfilerEvidence } from '@pelp/prompts';
 import { logger, readerMode, type EngineDeps } from '@pelp/engine/core';
 import { runtime } from './lib/runtime';
 
@@ -9,11 +9,9 @@ interface ProfilerJson {
   topics?: unknown;
   frames?: unknown;
   style?: { length?: unknown; dataAffinity?: unknown; tone?: unknown };
-  politicalLean?: { score?: unknown; bucket?: unknown; confidence?: unknown; explicitStatements?: unknown } | null;
   confidence?: { topics?: unknown; frames?: unknown; style?: unknown };
 }
 
-const BUCKETS: PoliticalBucket[] = ['izquierda', 'centro-izquierda', 'centro', 'centro-derecha', 'derecha', 'sin-señal'];
 
 function weighted(value: unknown, allowed?: readonly string[]): WeightedId[] {
   if (!Array.isArray(value)) return [];
@@ -57,7 +55,46 @@ export function decayFactor(previousUpdatedAt: string, now: Date, profileDecayDa
 }
 
 /** Aplica las reglas de 8.2/8.3 a la salida del modelo. */
-export function applyProfilerRules(json: ProfilerJson, previous: ReaderProfile, config: Config, now: Date, evidenceCount: number): ReaderProfile {
+/**
+ * Llamada aparte y angosta: solo extrae posturas. Va separada del perfil general porque mezclarla
+ * con temas, encuadres y estilo en un mismo JSON era parte del problema — la parte difícil recibía
+ * la menor atención del modelo.
+ */
+export async function classifyStances(
+  deps: EngineDeps,
+  config: Config,
+  questions: readonly { at: string; text: string }[],
+): Promise<{ stances: Stance[]; call?: ModelCall }> {
+  if (!questions.length) return { stances: [] };
+  const model = config.personalization.stanceModel;
+  const result = await deps.models.converse({
+    modelId: model,
+    system: getStancePrompt(config.prompts.stance, buildPoliticalContext(config.personalization.politicalContext)),
+    userText: buildStanceUserMessage(questions),
+    maxTokens: 900,
+    temperature: 0,
+    cacheSystem: true,
+  });
+  const call: ModelCall = {
+    model,
+    purpose: 'profiler',
+    usage: result.usage,
+    costUsd: costUsd(config.pricing, model, result.usage),
+    latencyMs: result.latencyMs,
+  };
+  const json = parseJsonObject<{ posturas?: unknown }>(result.text);
+  const raw = Array.isArray(json?.posturas) ? json.posturas : [];
+  return { stances: raw.filter(isStance), call };
+}
+
+export function applyProfilerRules(
+  json: ProfilerJson,
+  previous: ReaderProfile,
+  config: Config,
+  now: Date,
+  evidenceCount: number,
+  stances: readonly Stance[] = [],
+): ReaderProfile {
   const decay = decayFactor(previous.updatedAt, now, config.personalization.profileDecayDays);
   const topics = mergeWeights(previous.topics, weighted(json.topics), decay);
   const frames = mergeWeights(previous.frames, weighted(json.frames, FRAME_IDS), decay);
@@ -82,27 +119,28 @@ export function applyProfilerRules(json: ProfilerJson, previous: ReaderProfile, 
     version: previous.version + 1,
   };
   delete next.politicalLean;
-  const lean = json.politicalLean;
-  const explicit = Number(lean?.explicitStatements ?? 0);
-  const leanConfidence = clamp01(lean?.confidence);
-  const bucket = pick(lean?.bucket, BUCKETS, 'sin-señal');
+  // La orientación ya no sale del JSON del perfil: se calcula a partir de las posturas observadas.
+  // El modelo dice de qué habla y si está a favor o en contra; el signo lo pone el código.
+  const scored = scoreStances(stances);
   const onlyNonPolitical = frames.length > 0 && frames.every((frame) => NON_POLITICAL_FRAME_IDS.includes(frame.id));
   if (previous.consent.sensitiveInference) {
-    // Sin esto, cuando da "sin señal" no hay forma de saber si el modelo no vio posturas o si
-    // las vio y no llegó a la vara. Es la diferencia entre un umbral alto y algo roto.
+    const minimum = config.personalization.stanceMinStatements;
+    const passes =
+      scored.bucket !== 'sin-señal' && scored.usable >= minimum && scored.confidence >= config.personalization.stanceMinConfidence && !onlyNonPolitical;
     logger.info('profiler.lean', {
       readerId: previous.readerId,
-      bucket,
-      explicit,
-      confidence: leanConfidence,
+      bucket: scored.bucket,
+      score: scored.score,
+      usable: scored.usable,
+      agreement: scored.agreement,
+      confidence: scored.confidence,
       onlyNonPolitical,
-      passes: bucket !== 'sin-señal' && explicit >= 5 && leanConfidence >= 0.7 && !onlyNonPolitical,
+      passes,
+      citas: stances.slice(0, 6).map((stance) => `${stance.postura} ${stance.objetivo}: ${stance.cita.slice(0, 60)}`),
     });
-    if (bucket !== 'sin-señal' && explicit >= 5 && leanConfidence >= 0.7 && !onlyNonPolitical) {
-      next.politicalLean = { score: Math.min(1, Math.max(-1, Number(lean?.score) || 0)), bucket, confidence: leanConfidence };
-    } else {
-      next.politicalLean = { score: 0, bucket: 'sin-señal', confidence: 0 };
-    }
+    next.politicalLean = passes
+      ? { score: scored.score, bucket: scored.bucket, confidence: scored.confidence }
+      : { score: 0, bucket: 'sin-señal', confidence: 0 };
   }
   return next;
 }
@@ -144,11 +182,20 @@ export async function profileReader(deps: EngineDeps, reader: ReaderRecord, conf
     logger.warn('profiler.invalid_json', { readerId: reader.profile.readerId });
     return call;
   }
+  // Solo se pregunta por posturas si el lector dio permiso: si no, no hay nada que calcular.
+  const { stances, call: stanceCall } = reader.profile.consent.sensitiveInference
+    ? await classifyStances(deps, config, evidence.questions).catch((error: unknown) => {
+        logger.warn('profiler.stance_failed', { readerId: reader.profile.readerId, error: String(error) });
+        return { stances: [] as Stance[], call: undefined };
+      })
+    : { stances: [] as Stance[], call: undefined };
+
   const now = deps.now();
-  const profile = applyProfilerRules(json, reader.profile, config, now, evidence.questions.length);
+  const profile = applyProfilerRules(json, reader.profile, config, now, evidence.questions.length, stances);
   await deps.store.putProfileVersion(reader.profile.readerId, profile, now);
   await deps.store.saveReader({ ...reader, profile, questionsSinceProfile: 0 });
   await deps.store.addCost(montevideoDay(now), model, call.usage, call.costUsd, 'jobs');
+  if (stanceCall) await deps.store.addCost(montevideoDay(now), stanceCall.model, stanceCall.usage, stanceCall.costUsd, 'jobs');
   logger.info('profiler.updated', { readerId: reader.profile.readerId, version: profile.version, evidence: evidence.questions.length });
   return call;
 }
