@@ -22,6 +22,13 @@ export interface CanonicalDeps {
   retriever: RetrieverGateway;
   guard: GuardrailGateway;
   log: Logger;
+  /**
+   * Corrige los fragmentos contra el índice del corpus antes de usarlos. La metadata del índice
+   * vectorial es tan fresca como la última ingestión de Bedrock, que es asincrónica: el 14/9/2026
+   * una nota corregida a las 23:22 seguía apareciendo con la fecha vieja a las 23:39. Y esa fecha
+   * no solo se le muestra al lector: decide el aviso de desfase temporal.
+   */
+  enrichChunks?: (chunks: RetrievedChunk[]) => Promise<RetrievedChunk[]>;
 }
 
 export interface CanonicalInput {
@@ -160,7 +167,7 @@ export async function generateCanonical(deps: CanonicalDeps, input: CanonicalInp
         now: input.now,
         abortSignal: input.abortSignal,
       });
-  const chunks = retrieval.chunks;
+  const chunks = deps.enrichChunks ? await deps.enrichChunks(retrieval.chunks) : retrieval.chunks;
   if (!chunks.length) {
     deps.log.info('retrieval.empty', { widened: retrieval.widened });
     return noCoverageOutcome([], config, { widened: retrieval.widened });

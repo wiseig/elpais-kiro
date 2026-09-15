@@ -523,6 +523,36 @@ async function digestForSection(
   };
 }
 
+/**
+ * El índice del corpus en DynamoDB lo escribe el sync en el momento; la metadata del índice
+ * vectorial espera a que termine la ingestión. Cuando no coinciden, manda la base: es la que
+ * tiene la fecha, el título y la sección de verdad.
+ */
+async function enrichChunks(deps: EngineDeps, chunks: RetrievedChunk[]): Promise<RetrievedChunk[]> {
+  if (!chunks.length) return chunks;
+  return Promise.all(
+    chunks.map(async (chunk) => {
+      const record = await deps.store.getCorpusIndex(chunk.articleId).catch((error: unknown) => {
+        deps.log.warn('corpus.enrich_failed', { error: String(error) });
+        return undefined;
+      });
+      if (!record || record.removed) return chunk;
+      if (record.date !== chunk.date) {
+        deps.log.info('corpus.stale_chunk_date', { articleId: chunk.articleId, index: chunk.date, corpus: record.date });
+      }
+      return {
+        ...chunk,
+        date: record.date,
+        dateEpoch: Date.parse(`${record.date}T12:00:00-03:00`) || chunk.dateEpoch,
+        title: record.title || chunk.title,
+        section: record.section || chunk.section,
+        ...(record.imageUrl ? { imageUrl: record.imageUrl } : {}),
+        ...(record.deck ? { deck: record.deck } : {}),
+      };
+    }),
+  );
+}
+
 async function withCorpusExtras(deps: EngineDeps, sources: SourceItem[], chunks: RetrievedChunk[]): Promise<SourceItem[]> {
   if (!sources.length) return sources;
   const articleIdByUrl = new Map(chunks.map((chunk) => [chunk.url, chunk.articleId]));
@@ -690,7 +720,13 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
     const digest = wantsDigest ? await digestForDay(deps, day, config.intents.digest, section) : undefined;
     if (digest) deps.log.info('canonical.digest', { notes: digest.chunks.length, section: section?.names[0] ?? null });
     const generated = await generateCanonical(
-      { models: deps.models, retriever: deps.retriever, guard: deps.guard, log: deps.log },
+      {
+        models: deps.models,
+        retriever: deps.retriever,
+        guard: deps.guard,
+        log: deps.log,
+        enrichChunks: (chunks) => enrichChunks(deps, chunks),
+      },
       { question: standalone, today: day, model: budget.model, config, now, ...(digest ? { digest } : {}) },
     );
     calls.push(...generated.calls);

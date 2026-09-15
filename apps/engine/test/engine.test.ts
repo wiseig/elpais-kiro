@@ -309,6 +309,33 @@ describe('preguntas del día con notas viejas', () => {
   });
 });
 
+describe('fechas de las fuentes', () => {
+  it('corrige la fecha del fragmento contra el índice del corpus', async () => {
+    const { deps, store, models } = buildDeps({});
+    await consented(deps);
+    // El índice vectorial devuelve la fecha vieja; la base ya tiene la corregida.
+    const chunk = (await deps.retriever.retrieve({} as never)).chunks[0];
+    await store.putCorpusIndex({
+      articleId: chunk!.articleId,
+      contentHash: 'h',
+      s3Key: 'k',
+      date: '2026-09-14',
+      title: chunk!.title,
+      url: chunk!.url,
+      section: 'negocios',
+      origin: 'feed',
+      updatedAt: '2026-09-14T23:22:00.000Z',
+    });
+
+    const result = await askQuestion(deps, inbound('¿Qué pasó con los trabajadores del Frigorífico Tacuarembó?'));
+    const sources = result.answer.blocks.find((block) => block.type === 'sources');
+    expect(sources && sources.type === 'sources' ? sources.items[0]?.date : '').toBe('2026-09-14');
+    // Y el modelo también ve la fecha corregida: de ahí sale el aviso de desfase.
+    const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor'));
+    expect(canonical?.userText).toContain('2026-09-14');
+  });
+});
+
 describe('saludos', () => {
   it('contesta la bienvenida con sugerencias y sin tocar el corpus', async () => {
     const { deps, store, models, retriever } = buildDeps({});
