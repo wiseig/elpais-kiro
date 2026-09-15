@@ -103,13 +103,15 @@ export const DEFAULT_DIGEST_SECTIONS: DigestSection[] = [
   { names: ['sindicales', 'sindical'], match: ['informacion/sindicales'] },
   { names: ['en clave pais'], match: ['informacion/en-clave-pais'] },
   { names: ['educacion'], match: ['informacion/educacion'] },
-  { names: ['sociedad'], match: ['informacion/sociedad'] },
+  { names: ['sociedad', 'sociales'], match: ['informacion/sociedad'] },
   { names: ['servicios'], match: ['informacion/servicios'] },
-  { names: ['politica'], match: ['informacion/politica'] },
+  // "partidos politicos" va entero: "partidos" solo es ambiguo en Uruguay, donde lo más probable
+  // es que hablen de fútbol.
+  { names: ['partidos politicos', 'politica', 'politicos', 'politicas'], match: ['informacion/politica'] },
   { names: ['salud'], match: ['informacion/salud', 'bienestar'] },
   { names: ['mundo', 'internacionales', 'internacional'], match: ['mundo'] },
-  { names: ['deportes', 'deporte', 'ovacion'], match: ['ovacion'] },
-  { names: ['economia', 'negocios', 'mercados', 'finanzas'], match: ['negocios', 'mercados', 'economia', 'el-empresario'] },
+  { names: ['deportes', 'deporte', 'deportivas', 'deportivos', 'ovacion'], match: ['ovacion'] },
+  { names: ['economia', 'economicas', 'economicos', 'negocios', 'mercados', 'finanzas'], match: ['negocios', 'mercados', 'economia', 'el-empresario'] },
   { names: ['opinion', 'editoriales', 'columnas'], match: ['opinion'] },
   { names: ['espectaculos', 'cultura', 'tvshow'], match: ['tvshow'] },
   { names: ['tecnologia'], match: ['vida-actual/tecnologia'] },
@@ -243,7 +245,8 @@ const SECTION_FILLERS = new Set([
   'a', 'al', 'de', 'del', 'la', 'el', 'los', 'las', 'un', 'una', 'unos', 'unas', 'lo', 'en', 'sobre', 'para', 'por',
   'con', 'y', 'que', 'me', 'dame', 'pasame', 'mostrame', 'traeme', 'contame', 'decime', 'haceme', 'quiero', 'hay',
   'seccion', 'nota', 'notas', 'noticia', 'noticias', 'novedades', 'ultima', 'ultimas', 'ultimo', 'ultimos', 'todo',
-  'toda', 'todos', 'todas', 'porfa', 'favor', 'nuevo',
+  'toda', 'todos', 'todas', 'porfa', 'favor', 'nuevo', 'uruguay', 'uruguayas', 'uruguayos', 'montevideo',
+  'nacional', 'nacionales', 'pais', 'actualidad', 'tema', 'temas',
 ]);
 
 /** Saca del texto todas las apariciones de una lista de palabras. */

@@ -261,3 +261,31 @@ describe('isGreeting', () => {
     expect(isGreeting('qué hacele', { ...DEFAULT_INTENT_WORDS, greetings: [...DEFAULT_INTENT_WORDS.greetings, 'que hacele'] })).toBe(true);
   });
 });
+
+describe('secciones pedidas por su nombre', () => {
+  it('reconoce el adjetivo, no solo el sustantivo', () => {
+    const casos: [string, string][] = [
+      ['Noticias sobre partidos políticos Uruguay', 'informacion/politica'],
+      ['noticias políticas', 'informacion/politica'],
+      ['noticias de política', 'informacion/politica'],
+      ['noticias deportivas', 'ovacion'],
+      ['noticias económicas de Uruguay', 'negocios'],
+      ['temas sociales', 'informacion/sociedad'],
+    ];
+    for (const [texto, esperado] of casos) {
+      expect(digestSection(texto)?.match[0], texto).toBe(esperado);
+      expect(isDigestRequest(texto), texto).toBe(true);
+    }
+  });
+
+  it('no confunde "partidos" de fútbol con la sección política', () => {
+    for (const texto of ['los partidos de ayer', '¿Qué pasó en el partido de Peñarol?', 'partidos del fin de semana']) {
+      expect(digestSection(texto), texto).toBeUndefined();
+    }
+  });
+
+  it('una pregunta concreta sobre un partido no es un pedido de sección', () => {
+    expect(digestSection('¿Qué dijo el Partido Nacional sobre el presupuesto?')).toBeUndefined();
+    expect(isDigestRequest('¿Qué dijo el Partido Nacional sobre el presupuesto?')).toBe(false);
+  });
+});
