@@ -3,7 +3,7 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult, EventBridgeEvent } fr
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import type { Answer, InboundMessage } from '@pelp/domain';
-import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, CURRENT_CONSENT_TEXT_VERSION, TENANT_ID } from '@pelp/domain';
+import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, CURRENT_CONSENT_TEXT_VERSION, TENANT_ID, sectionLabel } from '@pelp/domain';
 import { hashChannelIdentity } from '@pelp/domain/node';
 import { answerToMarkdown, type ChannelAdapter, type ChannelContext, type OutboundPayload } from '@pelp/channel-sdk';
 
@@ -163,7 +163,7 @@ export class DiscordAdapter implements ChannelAdapter<APIGatewayProxyEvent> {
       kind: 'embed',
       title: answer.hadCoverage ? 'Preguntale a El País' : 'Sin cobertura',
       description: (text?.type === 'text' ? text.text : answerToMarkdown(answer)).slice(0, 4000),
-      fields: sources?.type === 'sources' ? sources.items.slice(0, 5).map((source) => ({ name: source.title.slice(0, 250), value: `${source.section} · ${source.date} · ${source.url}`.slice(0, 1024) })) : [],
+      fields: sources?.type === 'sources' ? sources.items.slice(0, 5).map((source) => ({ name: source.title.slice(0, 250), value: `${sectionLabel(source.section)} · ${source.date} · ${source.url}`.slice(0, 1024) })) : [],
     }];
   }
 

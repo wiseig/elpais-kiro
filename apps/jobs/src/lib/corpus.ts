@@ -2,7 +2,7 @@ import type { S3Client } from '@aws-sdk/client-s3';
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { BedrockAgentClient, GetIngestionJobCommand, StartIngestionJobCommand } from '@aws-sdk/client-bedrock-agent';
 import type { Config, CorpusIndexRecord } from '@pelp/domain';
-import { dayToEpoch, keys, sectionFromUrl, topicFromSection } from '@pelp/domain';
+import { dayToEpoch, keys, sectionFromUrl } from '@pelp/domain';
 import { contentHash, sha256Hex } from '@pelp/domain/node';
 import type { Store } from '@pelp/engine/core';
 
@@ -308,7 +308,11 @@ export async function upsertArticles(deps: CorpusDeps, articles: Article[]): Pro
         date: article.date,
         title: article.title,
         url: article.url,
-        section: topicFromSection(article.section),
+        // Completa, como la dice la URL ("informacion/politica"): achatarla al primer segmento
+        // dejaba a toda subsección de "informacion" inalcanzable por su nombre y etiquetada
+        // "Información" en las fuentes (15/9/2026). Los temas del lector se siguen calculando
+        // sobre el primer segmento donde se usan; acá va el dato entero.
+        section: article.section,
         origin: article.origin,
         updatedAt: deps.now().toISOString(),
         ...(article.imageUrl ? { imageUrl: article.imageUrl } : {}),

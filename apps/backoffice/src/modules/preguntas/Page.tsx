@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
+import { sectionLabel } from '@pelp/domain';
 import { Link } from 'react-router-dom';
 import type { QuestionDetail, QuestionListItem, QuestionsQuery } from '@pelp/domain/api';
 import { useApi } from '../../shared/ApiContext';
@@ -187,7 +188,7 @@ function DetailView({ detail }: { detail: QuestionDetail }) {
                 </a>
                 <span className="muted">
                   {' '}
-                  · {source.section} · {fmtDate(source.date)}
+                  · {sectionLabel(source.section)} · {fmtDate(source.date)}
                 </span>
               </li>
             ))}

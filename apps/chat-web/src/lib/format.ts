@@ -54,51 +54,5 @@ export function formatRelativeDay(ms: number): string {
   return shortDate.format(new Date(ms));
 }
 
-/** Nombres de sección con tilde para las secciones uruguayas más comunes (el resto se prettifica). */
-const SECTION_LABELS: Record<string, string> = {
-  informacion: 'Información',
-  politica: 'Política',
-  economia: 'Economía',
-  ovacion: 'Ovación',
-  opinion: 'Opinión',
-  tvshow: 'TV Show',
-  'el-empresario': 'El Empresario',
-  'vida-actual': 'Vida actual',
-  futbol: 'Fútbol',
-  tecnologia: 'Tecnología',
-  espectaculos: 'Espectáculos',
-  horoscopo: 'Horóscopo',
-  ecos: 'Ecos',
-  servicios: 'Servicios',
-  finanzas: 'Finanzas',
-  noticias: 'Noticias',
-  mercados: 'Mercados',
-  rurales: 'Rurales',
-  bienestar: 'Bienestar',
-  mundo: 'Mundo',
-  negocios: 'Negocios',
-  cultura: 'Cultura',
-  deportes: 'Deportes',
-  sociedad: 'Sociedad',
-  nacional: 'Nacional',
-  internacional: 'Internacional',
-  salud: 'Salud',
-  ciencia: 'Ciencia',
-};
-
-/**
- * Nombre de sección legible a partir de un slug ("el-empresario" -> "El Empresario"): toma el
- * último segmento, lo mapea a su nombre acentuado si es una sección uruguaya conocida, o si no
- * reemplaza los guiones por espacios y capitaliza la primera letra.
- */
-export function sectionLabel(slug: string): string {
-  const trimmed = slug.trim();
-  if (!trimmed) return '';
-  const segments = trimmed.split('/').filter(Boolean);
-  const last = (segments[segments.length - 1] ?? trimmed).toLowerCase();
-  const known = SECTION_LABELS[last];
-  if (known) return known;
-  const spaced = last.replace(/-+/g, ' ').trim();
-  if (!spaced) return trimmed;
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
+/** La etiqueta de sección es la misma en todos los frentes: vive en el dominio. */
+export { sectionLabel } from '@pelp/domain';
