@@ -21,6 +21,7 @@ import {
   DEFAULT_INTENT_WORDS,
   addDays,
   cleanQuestion,
+  dayToEpoch,
   describeDay,
   digestSection,
   hourKey,
@@ -543,7 +544,8 @@ async function enrichChunks(deps: EngineDeps, chunks: RetrievedChunk[]): Promise
       return {
         ...chunk,
         date: record.date,
-        dateEpoch: Date.parse(`${record.date}T12:00:00-03:00`) || chunk.dateEpoch,
+        // `dayToEpoch` da segundos, que es lo que usa el resto: el peso por recencia divide por 86400.
+        dateEpoch: dayToEpoch(record.date) || chunk.dateEpoch,
         title: record.title || chunk.title,
         section: record.section || chunk.section,
         ...(record.imageUrl ? { imageUrl: record.imageUrl } : {}),
