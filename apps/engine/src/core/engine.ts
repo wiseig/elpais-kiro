@@ -24,7 +24,9 @@ import {
   dayToEpoch,
   describeDay,
   digestSection,
+  digestWindowDays,
   hourKey,
+  isAnswerableSuggestion,
   isDigestRequest,
   isGreeting,
   montevideoDay,
@@ -447,7 +449,13 @@ function inSection(record: CorpusIndexRecord, section: DigestSection): boolean {
  * mira más atrás: una sección chica puede no publicar nada en el día y contestar "no hay nada"
  * sería falso.
  */
-async function digestForDay(deps: EngineDeps, day: string, options: DigestOptions, section?: DigestSection): Promise<{ chunks: RetrievedChunk[]; notice: string } | undefined> {
+async function digestForDay(
+  deps: EngineDeps,
+  day: string,
+  options: DigestOptions,
+  section?: DigestSection,
+  windowDays = 1,
+): Promise<{ chunks: RetrievedChunk[]; notice: string } | undefined> {
   const fromIndex = async (from: string, to: string) =>
     (await deps.store.listCorpusByDate(from, to, section ? 500 : 200).catch((error: unknown) => {
       deps.log.warn('digest.index_failed', { error: String(error) });
@@ -455,6 +463,21 @@ async function digestForDay(deps: EngineDeps, day: string, options: DigestOption
     })).filter((record) => !record.removed);
 
   if (section) return digestForSection(deps, day, options, section, fromIndex);
+
+  // "Uruguay esta semana" mira para atrás; "hoy", solo hoy.
+  if (windowDays > 1) {
+    const from = addDays(day, -(windowDays - 1));
+    const records = await fromIndex(from, day);
+    if (!records.length) return undefined;
+    const chunks = digestChunks(pickForDigest(records, options));
+    return {
+      chunks,
+      notice:
+        `El lector pide el panorama de los últimos ${windowDays} días. Los fragmentos son ${chunks.length} de las ` +
+        `${records.length} notas publicadas entre el ${describeDay(from)} y el ${describeDay(day)}, una selección por ` +
+        `sección. Contá lo principal del período y ubicá cada cosa en su día.`,
+    };
+  }
 
   let target = day;
   let records = await fromIndex(target, target);
@@ -483,7 +506,7 @@ function digestChunks(records: CorpusIndexRecord[]): RetrievedChunk[] {
     title: record.title,
     url: record.url,
     date: record.date,
-    dateEpoch: Date.parse(`${record.date}T12:00:00-03:00`) || 0,
+    dateEpoch: dayToEpoch(record.date) || 0,
     section: record.section,
     ...(record.imageUrl ? { imageUrl: record.imageUrl } : {}),
     ...(record.deck ? { deck: record.deck } : {}),
@@ -719,7 +742,9 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
     void deps.store.bumpCacheHit(qHash, corpusVersion);
     deps.log.metric('CacheHit', 1);
   } else {
-    const digest = wantsDigest ? await digestForDay(deps, day, config.intents.digest, section) : undefined;
+    const digest = wantsDigest
+      ? await digestForDay(deps, day, config.intents.digest, section, digestWindowDays(masked))
+      : undefined;
     if (digest) deps.log.info('canonical.digest', { notes: digest.chunks.length, section: section?.names[0] ?? null });
     const generated = await generateCanonical(
       {
@@ -793,7 +818,21 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
   const blocks: AnswerBlock[] = [{ type: 'text', text: finalText }];
   if (canonical.sources.length) blocks.push({ type: 'sources', items: canonical.sources });
   if (canonical.hadCoverage) blocks.push({ type: 'cta', text: config.answering.ctaText, url: canonical.sources[0]?.url ?? config.answering.ctaUrl });
-  if (adaptedSuggestions.length) blocks.push({ type: 'suggestions', items: adaptedSuggestions });
+  // Las repreguntas adaptadas se filtran y, si quedan pocas, se completan con las que ya sabemos
+  // que tienen respuesta. Nunca se le ofrece al lector una pregunta que después vamos a rechazar.
+  const usableSuggestions = adaptedSuggestions.filter((item) => isAnswerableSuggestion(item));
+  if (usableSuggestions.length < adaptedSuggestions.length) {
+    deps.log.info('suggestions.filtered', { descartadas: adaptedSuggestions.length - usableSuggestions.length });
+  }
+  // El relleno es solo para la respuesta adaptada: si nunca hubo repreguntas, no las inventamos.
+  if (adaptedSuggestions.length && usableSuggestions.length < 2) {
+    const trending = await suggestions(deps.store, config, now).catch(() => [] as string[]);
+    for (const item of trending) {
+      if (usableSuggestions.length >= 3) break;
+      if (!usableSuggestions.includes(item)) usableSuggestions.push(item);
+    }
+  }
+  if (usableSuggestions.length) blocks.push({ type: 'suggestions', items: usableSuggestions.slice(0, 3) });
   else if (!canonical.hadCoverage) {
     const trending = await suggestions(deps.store, config, now).catch(() => [] as string[]);
     if (trending.length) blocks.push({ type: 'suggestions', items: trending.slice(0, 3) });

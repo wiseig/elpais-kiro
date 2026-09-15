@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_INTENT_WORDS, addDays, isGreeting, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
+import { DEFAULT_INTENT_WORDS, addDays, digestWindowDays, isGreeting, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
 import { isUlid, ulid, ulidTime } from '../src/ulid';
 import { hasMetaTalk, isAllowedUrl, startsWithNoCoverage, validateAnswerText, withoutClosingInvitation } from '../src/validators';
 import { questionHash } from '../src/node';
@@ -155,6 +155,14 @@ describe('isDigestRequest', () => {
     }
   });
 
+  it('un ancla temporal sola ya pide el panorama', () => {
+    for (const text of ['Uruguay hoy', 'Uruguay esta semana', 'hoy', 'esta semana', 'Montevideo hoy']) {
+      expect(isDigestRequest(text), text).toBe(true);
+    }
+    expect(digestWindowDays('Uruguay esta semana')).toBe(7);
+    expect(digestWindowDays('Uruguay hoy')).toBe(1);
+  });
+
   it('no manda al panorama lo que tiene asunto propio aunque nombre el día', () => {
     for (const text of [
       '¿Qué está pasando en el puerto?',
@@ -162,6 +170,8 @@ describe('isDigestRequest', () => {
       '¿Qué pasó hoy con Peñarol?',
       '¿Qué hay de nuevo sobre la Udelar?',
       '¿Cuál es la actualidad del dólar?',
+      'el dólar hoy',
+      'Peñarol esta semana',
     ]) {
       expect(isDigestRequest(text), text).toBe(false);
     }

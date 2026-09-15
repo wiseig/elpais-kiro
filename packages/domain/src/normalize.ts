@@ -134,6 +134,7 @@ export const DEFAULT_INTENT_WORDS: IntentWords = {
   digestToday: [
     'hoy', 'del dia', 'de la jornada', 'de la manana', 'de la tarde', 'de esta manana', 'de esta tarde',
     'esta manana', 'esta tarde', 'esta noche', 'ahora', 'en este momento', 'por estas horas', 'recien',
+    'esta semana', 'la semana', 'estos dias', 'ultimos dias', 'ultima semana',
   ],
   digestStandalone: ['titulares', 'portada', 'novedades', 'actualidad', 'ultimas noticias', 'que hay de nuevo', 'lo mas importante'],
   digestMaxWords: 5,
@@ -213,13 +214,25 @@ export function isDigestRequest(question: string, words: IntentWords = DEFAULT_I
   const text = foldAccents(question);
   // El nombre de una sección ya es el pedido completo: "resumen de judiciales", "policiales".
   if (digestSection(question, words)) return true;
-  const digest = wordListRegex(words.digestWords);
-  if (!digest?.test(text)) return false;
-  if (leftoverTopic(text, words, [words.digestWords, words.digestToday, words.digestStandalone]).length > 0) return false;
-  if (wordListRegex(words.digestToday)?.test(text)) return true;
+  const lists = [words.digestWords, words.digestToday, words.digestStandalone];
+  // Si queda un tema propio no es panorama, con o sin palabra de resumen: "el dólar hoy" pregunta
+  // por el dólar.
+  if (leftoverTopic(text, words, lists).length > 0) return false;
+  const hasToday = Boolean(wordListRegex(words.digestToday)?.test(text));
+  // "Uruguay hoy" o "esta semana" no traen ninguna palabra de resumen y son un pedido de panorama
+  // igual: lo único que dicen es cuándo, y no queda nada más por lo que preguntar.
+  if (hasToday) return true;
+  if (!wordListRegex(words.digestWords)?.test(text)) return false;
   const standalone = wordListRegex(words.digestStandalone);
   if (!standalone?.test(text)) return false;
   return text.split(/[^a-z0-9]+/).filter(Boolean).length <= words.digestMaxWords;
+}
+
+/** Cuántos días abarca el pedido: "esta semana" mira para atrás, "hoy" es solo hoy. */
+const WEEK_ANCHOR = /\b(esta semana|la semana|ultima semana|estos dias|ultimos dias)\b/;
+
+export function digestWindowDays(question: string): number {
+  return WEEK_ANCHOR.test(foldAccents(question)) ? 7 : 1;
 }
 
 /**
@@ -268,6 +281,21 @@ export function digestSection(question: string, words: IntentWords = DEFAULT_INT
   const rest = stripWords(stripWords(stripWords(text, section.names), words.digestWords), words.digestToday);
   const left = rest.split(/[^a-z0-9]+/).filter((word) => word && !SECTION_FILLERS.has(word));
   return left.length ? undefined : section;
+}
+
+/**
+ * Una repregunta sugerida tiene que poder responderse con notas publicadas. El modelo proponía
+ * "¿Qué implicancias podría tener el financiamiento del casamiento de Trump en las relaciones
+ * internacionales?" y el propio sistema la rechazaba como fuera de tema: le ofrecíamos al lector
+ * una pregunta y después le decíamos que no. Esto descarta las especulativas antes de mostrarlas.
+ */
+const SPECULATIVE =
+  /\b(podria|podrian|deberia|deberian|deberiamos|seria|serian|afectaria|influiria|impactaria|cambiaria|pasaria|implicancias|consecuencias futuras|a futuro|en el futuro|que opinas|que te parece|crees que|creen que|imagina|imaginate|hipotetic)/;
+
+export function isAnswerableSuggestion(text: string): boolean {
+  const folded = foldAccents(text).trim();
+  if (folded.length < 8) return false;
+  return !SPECULATIVE.test(folded);
 }
 
 /** Nombre del día de la semana en español, a partir de un YYYY-MM-DD. */

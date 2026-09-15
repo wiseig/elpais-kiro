@@ -200,11 +200,18 @@ describe('prompts versionados', () => {
     expect(v4).toContain('Si contaste 5 o más, ubicalo en el eje');
   });
 
+  it('la adaptación v4 ata las repreguntas a lo publicado', () => {
+    const v4 = getPrompt('adaptation', 'v4');
+    expect(v4).toContain('tienen que poder responderse con lo que El País ya publicó');
+    expect(v4).toContain('Nada de especular');
+    expect(v4).toContain('devolvé la lista vacía');
+  });
+
   it('versiones desconocidas fallan explícitamente', () => {
     expect(() => getPrompt('canonical', 'v99')).toThrow();
     expect(listPromptVersions().canonical).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']);
     expect(listPromptVersions().rewrite).toEqual(['v1', 'v2', 'v3']);
-    expect(listPromptVersions().adaptation).toEqual(['v1', 'v2', 'v3']);
+    expect(listPromptVersions().adaptation).toEqual(['v1', 'v2', 'v3', 'v4']);
     expect(listPromptVersions().profiler).toEqual(['v1', 'v2', 'v3', 'v4']);
     expect(listPromptVersions().offTopic).toEqual(['v1', 'v2']);
   });
