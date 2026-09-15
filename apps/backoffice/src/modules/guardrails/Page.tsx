@@ -361,7 +361,7 @@ export default function GuardrailsPage() {
             <div className="form-grid__full">
               <Field
                 label="Palabras que marcan una pregunta o un pedido"
-                hint="Una por línea, sin acentos ni signos. Si la consulta tiene alguna, se manda tal cual; si no, se envuelve como «¿Qué publicó El País sobre…?». Acá van verbos como «contame», «haceme» o «mostrame»."
+                hint="Una por línea, sin acentos ni signos. Si la consulta tiene alguna, se manda tal cual; si no, se envuelve como «¿Qué se sabe sobre…?». Acá van verbos como «contame», «haceme» o «mostrame»."
               >
                 <textarea className="input" rows={6} value={form.questionMarkersText} onChange={(event) => set('questionMarkersText', event.target.value)} />
               </Field>

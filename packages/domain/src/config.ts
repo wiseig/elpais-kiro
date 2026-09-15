@@ -180,7 +180,7 @@ export const ConfigSchema = z.object({
     .object({
       /** Marcan que la consulta ya es una pregunta o un pedido; sin ninguna se trata como tema. */
       questionMarkers: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.questionMarkers]),
-      /** Hasta cuántas palabras se envuelve como tema ("¿Qué publicó El País sobre X?"). */
+      /** Hasta cuántas palabras se envuelve como tema ("¿Qué se sabe sobre X?"). */
       topicMaxWords: z.number().int().min(1).max(20).default(DEFAULT_INTENT_WORDS.topicMaxWords),
       /** Saludos sueltos: se contestan con una bienvenida y sugerencias, sin gastar una consulta. */
       greetings: z.array(z.string()).default([...DEFAULT_INTENT_WORDS.greetings]),

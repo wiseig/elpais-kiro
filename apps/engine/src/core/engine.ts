@@ -275,7 +275,15 @@ function normalizeForMatch(value: string): string {
  * Los lectores escriben temas sueltos ("Valentina Cancela", "Ataque Facultad Medicina"). Sin
  * forma de pregunta, el modelo canónico contestaba "El País no publicó sobre esto" y el filtro
  * de relevancia del guardrail puntuaba bajísimo. Se convierte en pregunta explícita para
- * recuperar, responder y medir relevancia; el texto original se guarda en el log igual.
+ * responder y medir relevancia; el texto original se guarda en el log y es lo que va al índice.
+ *
+ * La forma importa. El envoltorio era "¿Qué publicó El País sobre X?" y el 15/9/2026 se midió que
+ * arruinaba las dos cosas: en el índice vectorial, "El País" pesaba más que el tema y "El País
+ * cumple 108 años" salía primera o segunda para clima, tiempo hoy, Frigorífico Tacuarembó, Expo
+ * Prado y dólar; y en el filtro de relevancia, un pronóstico correcto daba 0,02 contra esa
+ * pregunta (espera una respuesta sobre publicaciones) y 1,0 contra "¿Qué se sabe sobre clima?".
+ * Peor: para pasar la relevancia el modelo abría con "El País publicó pronósticos para los días
+ * 13, 14 y 15", que ninguna nota afirma, y el sustento caía de 0,86 a 0,13.
  */
 export function asExplicitQuestion(text: string, words: IntentWords = DEFAULT_INTENT_WORDS): string {
   const trimmed = text.trim().replace(/\s+/g, ' ');
@@ -286,7 +294,7 @@ export function asExplicitQuestion(text: string, words: IntentWords = DEFAULT_IN
   // sobre haceme un resumen…?", que no significa nada y no recuperaba nada útil).
   if (trimmed.split(' ').length > words.topicMaxWords) return trimmed;
   if (wordListRegex(words.questionMarkers)?.test(normalizeForMatch(trimmed))) return trimmed;
-  return `¿Qué publicó El País sobre ${trimmed.replace(/[.;,]+$/, '')}?`;
+  return `¿Qué se sabe sobre ${trimmed.replace(/[.;,]+$/, '')}?`;
 }
 
 /** Formas en que los modelos suelen decir "ninguno" en vez de devolver null. */
@@ -380,7 +388,7 @@ async function recordCosts(deps: EngineDeps, calls: ModelCall[], day: string, ch
 type DigestOptions = Config['intents']['digest'];
 
 /** Las listas de la configuración, con la forma que esperan los detectores del dominio. */
-function intentWords(config: Config): IntentWords {
+export function intentWords(config: Config): IntentWords {
   const { intents } = config;
   return {
     questionMarkers: intents.questionMarkers,
@@ -775,20 +783,24 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
   const conversation = await loadConversation(deps, reader, inbound, now);
   const turns = (conversation.turnsData ?? []).slice(-config.answering.memoryTurns * 2);
   // La reescritura recibe lo que escribió el lector, no el texto envuelto: con "En uruguay" el
-  // envoltorio le entregaba "¿Qué publicó El País sobre En uruguay?", que parece una pregunta
+  // envoltorio le entregaba "¿Qué se sabe sobre En uruguay?", que parece una pregunta
   // completa, así que la daba por autónoma y se perdía el turno anterior (14/9/2026).
   const rewrite = await rewriteQuestion(deps, config, masked, turns);
   calls.push(...rewrite.calls);
   // La intención se mide sobre lo que escribió el lector, no sobre el texto ya envuelto: con
-  // "titulares" el envoltorio sumaba "qué publicó El País sobre…" y la frase dejaba de entrar
+  // "titulares" el envoltorio sumaba "qué se sabe sobre…" y la frase dejaba de entrar
   // por corta. Se mira también la reescritura, por si el panorama aparece en una repregunta.
   const wantsDigest = isDigestRequest(masked, intents) || isDigestRequest(rewrite.question, intents);
   // "Resumen de judiciales" pide una sección entera, no un tema: se arma con sus notas en vez
   // de mandar el nombre de la sección al índice vectorial, que traía cualquier cosa.
   const section = digestSection(masked, intents) ?? digestSection(rewrite.question, intents);
-  // Y con el panorama la pregunta viaja sin envolver: preguntarle al modelo "¿qué publicó El
-  // País sobre Portada?" lo hacía arrancar con "no publicó sobre Portada" antes del resumen.
+  // Y con el panorama la pregunta viaja sin envolver: preguntarle al modelo por "Portada" como
+  // tema lo hacía arrancar con "no publicó sobre Portada" antes del resumen.
   const standalone = wantsDigest ? cleanQuestion(masked) : asExplicitQuestion(rewrite.question, intents);
+  // Al índice va el tema tal como lo escribió el lector (o su reescritura), nunca envuelto: el
+  // envoltorio, cuando decía "¿Qué publicó El País sobre…?", arrastraba las notas que hablan del diario. Ver
+  // CanonicalInput.retrievalQuery.
+  const retrievalQuery = cleanQuestion(rewrite.question);
 
   const qHash = questionHash(standalone);
   const corpusVersion = config.corpus.version || 'initial';
@@ -811,7 +823,7 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
         log: deps.log,
         enrichChunks: (chunks) => enrichChunks(deps, chunks),
       },
-      { question: standalone, today: day, model: budget.model, config, now, ...(digest ? { digest } : {}) },
+      { question: standalone, retrievalQuery, today: day, model: budget.model, config, now, ...(digest ? { digest } : {}) },
     );
     calls.push(...generated.calls);
     const sources = await withCorpusExtras(deps, generated.sources, generated.chunks);

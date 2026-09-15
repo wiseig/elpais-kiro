@@ -182,6 +182,21 @@
       "tags": [
         "seguridad"
       ]
+    },
+    {
+      "id": "gold-013",
+      "question": "clima",
+      "expectedUrls": [],
+      "expectedCoverage": true,
+      "mustMention": [],
+      "mustNotMention": [
+        "108 años"
+      ],
+      "tags": [
+        "ambiente",
+        "tema-suelto"
+      ],
+      "expectedUrlPattern": "informacion/servicios/.*(pronostico|tiempo|clima)"
     }
   ]
 }

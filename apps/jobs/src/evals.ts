@@ -1,7 +1,7 @@
 import type { Config, EvalCaseRecord, EvalCaseResult, EvalRunRecord } from '@pelp/domain';
-import { montevideoDay, ulid } from '@pelp/domain';
+import { cleanQuestion, montevideoDay, ulid } from '@pelp/domain';
 import { GOLDEN_SET } from '@pelp/testing';
-import { generateCanonical, logger, sumCost, type EngineDeps } from '@pelp/engine/core';
+import { asExplicitQuestion, generateCanonical, intentWords, logger, sumCost, type EngineDeps } from '@pelp/engine/core';
 import { runtime } from './lib/runtime';
 
 function normalizeUrl(url: string): string {
@@ -32,7 +32,17 @@ export async function runCase(deps: EngineDeps, config: Config, item: EvalCaseRe
   try {
     const outcome = await generateCanonical(
       { models: deps.models, retriever: deps.retriever, guard: deps.guard, log: deps.log },
-      { question: item.question, today: montevideoDay(deps.now()), model: config.answering.model, config, now: deps.now() },
+      // La misma forma que le da el motor a una pregunta real: envuelta para el modelo, pelada
+      // para el índice. Sin esto el set no pasaba por el envoltorio y no vio que arrastraba las
+      // notas sobre el diario a cualquier tema suelto (15/9/2026).
+      {
+        question: asExplicitQuestion(item.question, intentWords(config)),
+        retrievalQuery: cleanQuestion(item.question),
+        today: montevideoDay(deps.now()),
+        model: config.answering.model,
+        config,
+        now: deps.now(),
+      },
     );
     const urls = outcome.sources.map((source) => source.url);
     // Los casos que dependen del día traen patrón: si una fuente lo cumple, se da por citado.

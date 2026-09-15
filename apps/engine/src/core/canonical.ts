@@ -32,8 +32,17 @@ export interface CanonicalDeps {
 }
 
 export interface CanonicalInput {
-  /** Pregunta autónoma (tras reescritura) que se usa para recuperar y responder. */
+  /** Pregunta autónoma (tras reescritura), como la ve el modelo y el filtro de relevancia. */
   question: string;
+  /**
+   * Lo que va al índice vectorial. Cuando el lector escribe un tema suelto ("clima"), la pregunta
+   * se envuelve ("¿Qué se sabe sobre clima?") para que el modelo y el filtro de relevancia la
+   * entiendan; al índice va el tema pelado. Medido el 15/9/2026 con el envoltorio de entonces
+   * ("¿Qué publicó El País sobre…?"): "El País cumple 108 años" salía primera o segunda para
+   * clima, tiempo hoy, Frigorífico Tacuarembó, Expo Prado y dólar; con el tema pelado, la nota
+   * correcta salía primera en las seis. Si falta, se usa `question`.
+   */
+  retrievalQuery?: string;
   today: string;
   model: string;
   config: Config;
@@ -160,7 +169,7 @@ export async function generateCanonical(deps: CanonicalDeps, input: CanonicalInp
     ? { chunks: input.digest.chunks, widened: false }
     : await deps.retriever.retrieve({
         knowledgeBaseId: config.corpus.knowledgeBaseId,
-        query: input.question,
+        query: input.retrievalQuery ?? input.question,
         retrieval: config.answering.retrieval,
         maxSources: config.answering.maxSources,
         allowedUrlHosts: config.guardrails.allowedUrlHosts,

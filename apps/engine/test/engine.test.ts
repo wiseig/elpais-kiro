@@ -572,11 +572,11 @@ describe('pedidos de panorama del día', () => {
     });
     await askQuestion(deps, inbound('Titulares'));
     expect(retriever.calls).toHaveLength(0);
-    // Y la pregunta llega sin envolver: con "¿qué publicó El País sobre Titulares?" el modelo
+    // Y la pregunta llega sin envolver: con "¿qué se sabe sobre Titulares?" el modelo
     // arrancaba diciendo que no se publicó nada sobre eso.
     const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor'));
     expect(canonical?.userText).toContain('<PREGUNTA>\nTitulares');
-    expect(canonical?.userText).not.toContain('¿Qué publicó El País sobre Titulares?');
+    expect(canonical?.userText).not.toContain('¿Qué se sabe sobre Titulares?');
   });
 
   it('no manda al panorama una consulta con tema propio', async () => {
@@ -841,9 +841,9 @@ describe('temas vedados: coincidencia y evidencia', () => {
 
 describe('consultas sin forma de pregunta', () => {
   it('convierte temas y nombres sueltos en una pregunta explícita', () => {
-    expect(asExplicitQuestion('Valentina Cancela')).toBe('¿Qué publicó El País sobre Valentina Cancela?');
-    expect(asExplicitQuestion('Ataque Facultad Medicina')).toBe('¿Qué publicó El País sobre Ataque Facultad Medicina?');
-    expect(asExplicitQuestion('  dólar   hoy ')).toBe('¿Qué publicó El País sobre dólar hoy?');
+    expect(asExplicitQuestion('Valentina Cancela')).toBe('¿Qué se sabe sobre Valentina Cancela?');
+    expect(asExplicitQuestion('Ataque Facultad Medicina')).toBe('¿Qué se sabe sobre Ataque Facultad Medicina?');
+    expect(asExplicitQuestion('  dólar   hoy ')).toBe('¿Qué se sabe sobre dólar hoy?');
   });
 
   it('deja intactas las preguntas y los pedidos ya explícitos', () => {
@@ -862,7 +862,7 @@ describe('consultas sin forma de pregunta', () => {
     expect(asExplicitQuestion(long)).toBe(long);
     expect(asExplicitQuestion('   ')).toBe('');
     // Las listas salen de la configuración: agregar un verbo alcanza para que deje de envolver.
-    expect(asExplicitQuestion('Tirame el dólar')).toBe('¿Qué publicó El País sobre Tirame el dólar?');
+    expect(asExplicitQuestion('Tirame el dólar')).toBe('¿Qué se sabe sobre Tirame el dólar?');
     const conTirame = { ...DEFAULT_INTENT_WORDS, questionMarkers: [...DEFAULT_INTENT_WORDS.questionMarkers, 'tirame'] };
     expect(asExplicitQuestion('Tirame el dólar', conTirame)).toBe('Tirame el dólar');
   });
@@ -873,17 +873,20 @@ describe('consultas sin forma de pregunta', () => {
     await consented(deps);
     await askQuestion(deps, inbound('FMED'));
     const classifier = models.calls.find((call) => call.system.startsWith('Clasificás preguntas'));
-    expect(classifier?.userText).toContain('¿Qué publicó El País sobre FMED?');
+    expect(classifier?.userText).toContain('¿Qué se sabe sobre FMED?');
   });
 
-  it('usa la pregunta explícita para recuperar y responder', async () => {
+  it('envuelve el tema para el modelo pero lo manda pelado al índice', async () => {
     // La reescritura de contexto corre igual en preguntas cortas: acá devuelve el mismo tema.
     const models = fakeModels({ rewriteJson: () => JSON.stringify({ question: 'Frigorífico Tacuarembó' }) });
-    const { deps } = buildDeps({ models });
+    const { deps, retriever } = buildDeps({ models });
     await consented(deps);
     await askQuestion(deps, inbound('Frigorífico Tacuarembó'));
     const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor de El País'));
-    expect(canonical?.userText).toContain('¿Qué publicó El País sobre Frigorífico Tacuarembó?');
+    expect(canonical?.userText).toContain('¿Qué se sabe sobre Frigorífico Tacuarembó?');
+    // Al índice vectorial no: envuelto, "El País" pesaba más que el tema y traía las notas sobre el diario.
+    expect(retriever.calls).toHaveLength(1);
+    expect(retriever.calls[0]?.query).toBe('Frigorífico Tacuarembó');
   });
 });
 

@@ -62,7 +62,7 @@ export function foldAccents(text: string): string {
 export interface IntentWords {
   /** Marcan que la consulta ya es una pregunta o un pedido, no un tema suelto. */
   questionMarkers: readonly string[];
-  /** Hasta cuántas palabras se considera tema suelto y se envuelve en "¿Qué publicó El País sobre…?". */
+  /** Hasta cuántas palabras se considera tema suelto y se envuelve en "¿Qué se sabe sobre…?". */
   topicMaxWords: number;
   /** Palabras de panorama: resumen, titulares, qué hay de nuevo. */
   digestWords: readonly string[];
