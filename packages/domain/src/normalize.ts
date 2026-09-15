@@ -122,20 +122,20 @@ export const DEFAULT_INTENT_WORDS: IntentWords = {
     'porque', 'hay', 'hubo', 'paso', 'pasa', 'dijo', 'dice', 'contame', 'contanos', 'conta', 'explicame', 'explica',
     'decime', 'resumime', 'resumi', 'resumen', 'ampliame', 'dame', 'damelo', 'mostrame', 'pasame', 'traeme', 'haceme',
     'hacer', 'armame', 'listame', 'enumerame', 'detallame', 'describime', 'buscame', 'busca', 'quiero', 'necesito',
-    'sabes', 'se sabe',
+    'sabes', 'se sabe', 'pregunta', 'preguntame', 'preguntanos', 'preguntar', 'preguntas',
   ],
   topicMaxWords: 6,
   digestWords: [
     'resumen', 'resumime', 'resumi', 'panorama', 'titulares', 'portada', 'novedades', 'que hay de nuevo', 'que hay hoy',
     'lo mas importante', 'lo ultimo', 'ultimas noticias', 'noticias del dia', 'noticias de hoy', 'que paso hoy',
     'que pasa hoy', 'que se publico hoy', 'que publicaron hoy', 'como viene el dia', 'que esta pasando', 'que estuvo pasando',
-    'que viene pasando', 'que pasa', 'que paso', 'que hay',
+    'que viene pasando', 'que pasa', 'que paso', 'que hay', 'actualidad', 'la actualidad',
   ],
   digestToday: [
     'hoy', 'del dia', 'de la jornada', 'de la manana', 'de la tarde', 'de esta manana', 'de esta tarde',
     'esta manana', 'esta tarde', 'esta noche', 'ahora', 'en este momento', 'por estas horas', 'recien',
   ],
-  digestStandalone: ['titulares', 'portada', 'novedades', 'ultimas noticias', 'que hay de nuevo', 'lo mas importante'],
+  digestStandalone: ['titulares', 'portada', 'novedades', 'actualidad', 'ultimas noticias', 'que hay de nuevo', 'lo mas importante'],
   digestMaxWords: 5,
   digestFiller: [
     'uruguay', 'uruguaya', 'uruguayo', 'montevideo', 'pais', 'diario', 'noticia', 'noticias', 'novedad', 'novedades',

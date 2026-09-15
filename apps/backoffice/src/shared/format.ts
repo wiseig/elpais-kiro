@@ -23,9 +23,17 @@ const usdPreciseFmt = new Intl.NumberFormat(LOCALE, {
 });
 const intFmt = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 0 });
 
+/**
+ * Un `YYYY-MM-DD` suelto lo parsea JavaScript como medianoche UTC, y al mostrarlo en hora de
+ * Montevideo (UTC-3) retrocede al día anterior: una nota del 14 se veía como del 13. Se ancla al
+ * mediodía, donde ninguna zona horaria cruza el límite del día. Las marcas con hora no se tocan.
+ */
+const BARE_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
 function toDate(value: string | number | Date | undefined | null): Date | null {
   if (value === undefined || value === null || value === '') return null;
-  const date = value instanceof Date ? value : new Date(value);
+  const raw = typeof value === 'string' && BARE_DAY.test(value.trim()) ? `${value.trim()}T12:00:00Z` : value;
+  const date = raw instanceof Date ? raw : new Date(raw);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 

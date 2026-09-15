@@ -149,12 +149,19 @@ describe('isDigestRequest', () => {
     }
   });
 
+  it('"actualidad" pide el panorama, aunque venga envuelto en un pedido', () => {
+    for (const text of ['actualidad', 'Preguntá sobre actualidad...', 'Contame la actualidad', '¿Qué hay de actualidad?']) {
+      expect(isDigestRequest(text), text).toBe(true);
+    }
+  });
+
   it('no manda al panorama lo que tiene asunto propio aunque nombre el día', () => {
     for (const text of [
       '¿Qué está pasando en el puerto?',
       '¿Qué pasa ahora con el dólar?',
       '¿Qué pasó hoy con Peñarol?',
       '¿Qué hay de nuevo sobre la Udelar?',
+      '¿Cuál es la actualidad del dólar?',
     ]) {
       expect(isDigestRequest(text), text).toBe(false);
     }
