@@ -267,7 +267,14 @@ export async function generateCanonical(deps: CanonicalDeps, input: CanonicalInp
       // respaldar, y ahí lo honesto es entregar las notas.
       return strict && !strict.hadCoverage
         ? noCoverageOutcome(chunks, config, { calls, retried, groundingFailed, widened: retrieval.widened })
-        : unverifiedOutcome(chunks, config, { calls, retried, widened: retrieval.widened, unverifiedAnswer: (strict ?? draft).answer });
+        : unverifiedOutcome(chunks, config, {
+            calls,
+            retried,
+            widened: retrieval.widened,
+            unverifiedAnswer: (strict ?? draft).answer,
+            ...(grounding.grounding !== undefined ? { groundingScore: grounding.grounding } : {}),
+            ...(grounding.relevance !== undefined ? { relevanceScore: grounding.relevance } : {}),
+          });
     }
     grounding = await deps.guard.checkGrounding(
       guardrail,
@@ -278,7 +285,15 @@ export async function generateCanonical(deps: CanonicalDeps, input: CanonicalInp
       // Las dos métricas, no solo el sustento: el guardrail bloquea por cualquiera de las dos y
       // sin la relevancia en el log hay que adivinar cuál fue.
       deps.log.warn('canonical.grounding_failed_twice', { grounding: grounding.grounding, relevance: grounding.relevance });
-      return unverifiedOutcome(chunks, config, { calls, retried, widened: retrieval.widened, unverifiedAnswer: strict.answer, ...(grounding.grounding !== undefined ? { groundingScore: grounding.grounding } : {}) });
+      // Las dos métricas se guardan: sin la relevancia, la ficha decía "falta de sustento" con 0,95.
+      return unverifiedOutcome(chunks, config, {
+        calls,
+        retried,
+        widened: retrieval.widened,
+        unverifiedAnswer: strict.answer,
+        ...(grounding.grounding !== undefined ? { groundingScore: grounding.grounding } : {}),
+        ...(grounding.relevance !== undefined ? { relevanceScore: grounding.relevance } : {}),
+      });
     }
     draft = strict;
   }

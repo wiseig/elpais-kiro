@@ -7,7 +7,7 @@ import type { Store } from './store';
 // La caché guarda el día además del momento: aunque la Lambda siga caliente, la portada se
 // rearma al cambiar el día y nunca se queda con las notas de ayer.
 let cached: { at: number; day: string; items: string[] } | undefined;
-let cachedCards: { at: number; day: string; cards: SuggestionCard[] } | undefined;
+let cachedCards: { at: number; day: string; version: string; cards: SuggestionCard[] } | undefined;
 
 /**
  * Las preguntas del set dorado entran al log como cualquier otra —el smoke test las dispara
@@ -60,65 +60,50 @@ export function questionFromTitle(title: string): string {
     const cut = short.slice(0, 90);
     short = cut.slice(0, cut.lastIndexOf(' ') > 40 ? cut.lastIndexOf(' ') : 90).trim();
   }
-  return `¿Qué dice El País sobre "${short}"?`;
+  // Sin el diario de sujeto: "¿Qué dice El País sobre…?" le costaba la relevancia del guardrail a
+  // una respuesta correcta (15/9/2026). Misma forma que el envoltorio de temas sueltos.
+  return `¿Qué se sabe sobre "${short}"?`;
+}
+
+/** Notas que salen todos los días con el mismo molde: no son novedad para una tarjeta. */
+const DAILY_FIXTURE = /horoscopo|efemerides|tiempo de hoy|cotizaci[oó]n del d[oó]lar hoy|unidad indexada hoy/i;
+
+/** Lo más nuevo primero: por día, y dentro del día por hora de publicación. */
+function newerFirst(a: CorpusIndexRecord, b: CorpusIndexRecord): number {
+  if (a.date !== b.date) return b.date.localeCompare(a.date);
+  return (b.publishedAt ?? b.updatedAt).localeCompare(a.publishedAt ?? a.updatedAt);
 }
 
 /**
- * Tarjetas de portada (10.2): tendencias con cobertura y su nota más citada, completadas con
- * notas recientes del corpus. Máximo 4, sin repetir nota y solo con notas que traen foto:
- * la tarjeta es mitad imagen y sin ella se ve rota.
+ * Tarjetas de portada (10.2): las cuatro notas más recientes con foto. Hasta el 15/9/2026 se
+ * armaban con las preguntas más repetidas de los últimos días y un relleno de notas recientes;
+ * se pidió que fueran solo actualidad, sin ningún modelo en el medio, y que se renueven con cada
+ * sync. La caché se ata a la versión del corpus, que cambia cuando la ingestión de un sync
+ * termina: ese es el momento en que las notas nuevas ya se pueden buscar, así ninguna tarjeta
+ * ofrece una pregunta que la búsqueda todavía no puede contestar. Solo con foto: la tarjeta es
+ * mitad imagen y sin ella se ve rota.
  */
-export async function suggestionCards(store: Store, config: Config, now: Date, ttlMs = 10 * 60_000): Promise<SuggestionCard[]> {
+export async function suggestionCards(store: Store, config: Config, now: Date, ttlMs = 60 * 60_000): Promise<SuggestionCard[]> {
   const today = montevideoDay(now);
-  if (cachedCards && cachedCards.day === today && Date.now() - cachedCards.at < ttlMs) return cachedCards.cards;
-  const fresh = freshFrom(config, now);
-  const control = await controlKeys(store);
-  const cards: SuggestionCard[] = [];
-  const usedUrls = new Set<string>();
-  const counts = new Map<string, { count: number; log: QuestionLogRecord }>();
-  for (const day of lastDays(config.suggestions.days, now)) {
-    let logs: QuestionLogRecord[] = [];
-    try {
-      logs = await store.listQuestionLogs(day, 500);
-    } catch {
-      logs = [];
-    }
-    for (const log of logs) {
-      if (!log.hadCoverage || log.blocked || !log.sources.length) continue;
-      if (control.has(normalizeQuestion(log.questionMasked))) continue;
-      if (isFollowUp(log.questionMasked)) continue;
-      const entry = counts.get(log.qnormHash) ?? { count: 0, log };
-      entry.count += 1;
-      counts.set(log.qnormHash, entry);
-    }
+  const version = config.corpus.version || 'initial';
+  if (cachedCards && cachedCards.day === today && cachedCards.version === version && Date.now() - cachedCards.at < ttlMs) {
+    return cachedCards.cards;
   }
-  for (const entry of [...counts.values()].filter((item) => item.count >= 2).sort((a, b) => b.count - a.count)) {
-    const source = entry.log.sources[0];
-    // Una pregunta muy repetida sobre una nota vieja no es novedad: la portada muestra actualidad.
-    // Sin foto la tarjeta queda con un relleno gris, así que esas notas no se ofrecen acá.
-    if (!source || !source.imageUrl || source.date < fresh || usedUrls.has(source.url)) continue;
-    usedUrls.add(source.url);
-    cards.push({ question: entry.log.questionMasked, kind: 'trending', source });
+  let recent: CorpusIndexRecord[] = [];
+  try {
+    recent = await store.listCorpusByDate(montevideoDay(daysAgo(7, now)), today, 300);
+  } catch {
+    recent = [];
+  }
+  const usedUrls = new Set<string>();
+  const cards: SuggestionCard[] = [];
+  for (const record of recent.filter((item) => !item.removed && item.imageUrl && !DAILY_FIXTURE.test(`${item.section} ${item.title}`)).sort(newerFirst)) {
+    if (usedUrls.has(record.url)) continue;
+    usedUrls.add(record.url);
+    cards.push({ question: questionFromTitle(record.title), kind: 'recent', source: sourceFromCorpus(record) });
     if (cards.length >= 4) break;
   }
-  if (cards.length < 4) {
-    let recent: CorpusIndexRecord[] = [];
-    try {
-      recent = await store.listCorpusByDate(montevideoDay(daysAgo(30, now)), montevideoDay(now), 200);
-    } catch {
-      recent = [];
-    }
-    const preferred = recent.filter((record) => !record.removed && record.imageUrl && !usedUrls.has(record.url) && !/horoscopo|efemerides|tiempo de hoy|cotizaci[oó]n del d[oó]lar hoy|unidad indexada hoy/i.test(`${record.section} ${record.title}`));
-    // Diversificar por sección.
-    const seenSections = new Set<string>();
-    for (const record of [...preferred.filter((r) => !seenSections.has(r.section) && seenSections.add(r.section)), ...preferred]) {
-      if (cards.length >= 4) break;
-      if (usedUrls.has(record.url)) continue;
-      usedUrls.add(record.url);
-      cards.push({ question: questionFromTitle(record.title), kind: 'recent', source: sourceFromCorpus(record) });
-    }
-  }
-  cachedCards = { at: Date.now(), day: today, cards };
+  cachedCards = { at: Date.now(), day: today, version, cards };
   return cards;
 }
 

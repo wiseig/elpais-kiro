@@ -1,5 +1,5 @@
 import type { Config, EvalCaseRecord, EvalCaseResult, EvalRunRecord } from '@pelp/domain';
-import { cleanQuestion, montevideoDay, ulid } from '@pelp/domain';
+import { cleanQuestion, montevideoDay, neutralizeSourceFrame, sourceFrameTopic, ulid } from '@pelp/domain';
 import { GOLDEN_SET } from '@pelp/testing';
 import { asExplicitQuestion, generateCanonical, intentWords, logger, sumCost, type EngineDeps } from '@pelp/engine/core';
 import { runtime } from './lib/runtime';
@@ -36,8 +36,8 @@ export async function runCase(deps: EngineDeps, config: Config, item: EvalCaseRe
       // para el índice. Sin esto el set no pasaba por el envoltorio y no vio que arrastraba las
       // notas sobre el diario a cualquier tema suelto (15/9/2026).
       {
-        question: asExplicitQuestion(item.question, intentWords(config)),
-        retrievalQuery: cleanQuestion(item.question),
+        question: neutralizeSourceFrame(asExplicitQuestion(item.question, intentWords(config))),
+        retrievalQuery: sourceFrameTopic(item.question) ?? cleanQuestion(item.question),
         today: montevideoDay(deps.now()),
         model: config.answering.model,
         config,

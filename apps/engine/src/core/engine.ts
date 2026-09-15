@@ -35,6 +35,8 @@ import {
   sectionFromUrl,
   ulid,
   wordListRegex,
+  neutralizeSourceFrame,
+  sourceFrameTopic,
 } from '@pelp/domain';
 import { questionHash } from '@pelp/domain/node';
 import { costUsd, parseJsonObject } from '@pelp/bedrock';
@@ -796,11 +798,13 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
   const section = digestSection(masked, intents) ?? digestSection(rewrite.question, intents);
   // Y con el panorama la pregunta viaja sin envolver: preguntarle al modelo por "Portada" como
   // tema lo hacía arrancar con "no publicó sobre Portada" antes del resumen.
-  const standalone = wantsDigest ? cleanQuestion(masked) : asExplicitQuestion(rewrite.question, intents);
-  // Al índice va el tema tal como lo escribió el lector (o su reescritura), nunca envuelto: el
-  // envoltorio, cuando decía "¿Qué publicó El País sobre…?", arrastraba las notas que hablan del diario. Ver
-  // CanonicalInput.retrievalQuery.
-  const retrievalQuery = cleanQuestion(rewrite.question);
+  // Si el lector (o una tarjeta prearmada) puso al diario de sujeto, se lo saca: "¿Qué dice El
+  // País sobre X?" hundía la relevancia del guardrail a 0,02 con la noticia bien contada, y el
+  // 15/9/2026 dejó sin respuesta una pregunta prearmada con sustento 0,95. Ver neutralizeSourceFrame.
+  const standalone = wantsDigest ? cleanQuestion(masked) : neutralizeSourceFrame(asExplicitQuestion(rewrite.question, intents));
+  // Al índice va el tema pelado, nunca envuelto ni con el diario adentro: "El País" pesa más que
+  // el tema y arrastra las notas que hablan del diario. Ver CanonicalInput.retrievalQuery.
+  const retrievalQuery = sourceFrameTopic(rewrite.question) ?? cleanQuestion(rewrite.question);
 
   const qHash = questionHash(standalone);
   const corpusVersion = config.corpus.version || 'initial';

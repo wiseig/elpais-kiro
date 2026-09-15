@@ -193,6 +193,13 @@ export function metadataSize(attributes: Record<string, string | number>): numbe
   return Buffer.byteLength(JSON.stringify(attributes));
 }
 
+/** ISO de la fecha del feed, o nada si no viene o no se puede leer. */
+export function publishedAtOf(article: Article): string | undefined {
+  if (!article.feedDate) return undefined;
+  const parsed = Date.parse(article.feedDate);
+  return Number.isNaN(parsed) ? undefined : new Date(parsed).toISOString();
+}
+
 export function s3KeyFor(article: Article): string {
   const [year, month, day] = article.date.split('-');
   return `notas/${year}/${month}/${day}/${article.articleId}.md`;
@@ -315,6 +322,9 @@ export async function upsertArticles(deps: CorpusDeps, articles: Article[]): Pro
         section: article.section,
         origin: article.origin,
         updatedAt: deps.now().toISOString(),
+        // La hora real de publicación: `date` es solo el día y `updatedAt` cambia con cada
+        // corrección, así que ninguna de las dos sirve para saber cuál es la nota más nueva.
+        ...(publishedAtOf(article) ? { publishedAt: publishedAtOf(article) } : {}),
         ...(article.imageUrl ? { imageUrl: article.imageUrl } : {}),
         ...(article.deck.trim() ? { deck: article.deck.trim().slice(0, 200) } : {}),
       };

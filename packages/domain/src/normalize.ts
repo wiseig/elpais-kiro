@@ -12,6 +12,42 @@ export function normalizeQuestion(text: string): string {
     .trim();
 }
 
+/**
+ * Preguntas que ponen al diario de sujeto: "¿Qué dice El País sobre X?", "qué publicó el país del
+ * clásico". Es la forma natural de preguntarle a este producto, y también la que peor le cae al
+ * guardrail: el filtro de relevancia espera una respuesta *sobre publicaciones* y le da 0,02 a la
+ * noticia bien contada (medido el 15/9/2026 con "¿Qué publicó El País sobre clima?": 0,02 contra
+ * 1,0 con "¿Qué se sabe sobre clima?"); y en el índice vectorial "El País" pesa más que el tema y
+ * arrastra las notas sobre el diario. Como el producto solo responde con notas de El País, el
+ * marco es redundante: se lo saca y queda el tema. "Opina" no entra: preguntar por la línea
+ * editorial es otra cosa.
+ */
+const SOURCE_FRAME =
+  /^\s*¿?\s*qu[eé]\s+(?:dice|dijo|dicen|publica|public[oó]|publicaron|informa|inform[oó]|cuenta|cont[oó]|hay|tiene|sali[oó]|escribi[oó]|report[oó]|se\s+sabe|sabe)\s+(?:hoy\s+|ayer\s+)?(?:en\s+)?(?:el\s+diario\s+)?el\s+pa[ií]s\s+(?:hoy\s+|ayer\s+)?(sobre|de|del|acerca\s+de|respecto\s+(?:a|de))\s+(.+?)\s*\??\s*$/i;
+
+function sourceFrameParts(text: string): { prep: string; topic: string } | undefined {
+  const match = SOURCE_FRAME.exec(text.normalize('NFC'));
+  if (!match) return undefined;
+  const prep = (match[1] ?? '').toLowerCase().replace(/\s+/g, ' ');
+  const raw = (match[2] ?? '').trim().replace(/[.,;:]+$/, '');
+  if (!raw) return undefined;
+  return { prep, topic: prep === 'del' ? `el ${raw}` : raw };
+}
+
+/** El tema pelado de una pregunta con el diario de sujeto, sin comillas; `undefined` si no la tiene. */
+export function sourceFrameTopic(text: string): string | undefined {
+  const parts = sourceFrameParts(text);
+  if (!parts) return undefined;
+  const topic = parts.topic.replace(/^[«“"']+|[»”"']+$/g, '').trim();
+  return topic || undefined;
+}
+
+/** La misma pregunta sin el diario de sujeto: "¿Qué dice El País sobre X?" → "¿Qué se sabe sobre X?". */
+export function neutralizeSourceFrame(text: string): string {
+  const parts = sourceFrameParts(text);
+  return parts ? `¿Qué se sabe sobre ${parts.topic}?` : text;
+}
+
 /** Recorta y colapsa espacios sin cambiar el contenido. */
 export function cleanQuestion(text: string): string {
   return text.replace(/\s+/g, ' ').trim();

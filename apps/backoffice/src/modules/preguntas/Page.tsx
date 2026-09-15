@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { sectionLabel } from '@pelp/domain';
+import { GUARDRAIL_GROUNDING_THRESHOLD, GUARDRAIL_RELEVANCE_THRESHOLD, sectionLabel } from '@pelp/domain';
 import { Link } from 'react-router-dom';
 import type { QuestionDetail, QuestionListItem, QuestionsQuery } from '@pelp/domain/api';
 import { useApi } from '../../shared/ApiContext';
@@ -17,6 +17,11 @@ import { Empty } from '../../shared/components/Empty';
 import { VerdictView } from '../../shared/components/Verdict';
 import { Notice, useNotice } from '../../shared/components/Notice';
 import { fmtDate, fmtDateTime, fmtInt, fmtMs, fmtNumber, fmtTokens, fmtUsd, truncate } from '../../shared/format';
+
+/** El descarte fue del filtro de relevancia, no del sustento: cambia qué hay que mirar. */
+function rejectedByRelevance(log: { groundingScore?: number; relevanceScore?: number }): boolean {
+  return log.relevanceScore !== undefined && log.relevanceScore < GUARDRAIL_RELEVANCE_THRESHOLD && (log.groundingScore ?? 1) >= GUARDRAIL_GROUNDING_THRESHOLD;
+}
 
 type YesNo = '' | 'yes' | 'no';
 
@@ -166,10 +171,11 @@ function DetailView({ detail }: { detail: QuestionDetail }) {
 
       {log.unverifiedAnswer && (
         <section>
-          <h3 className="h3">Resumen descartado por falta de sustento</h3>
+          <h3 className="h3">{rejectedByRelevance(log) ? 'Resumen descartado por el filtro de relevancia' : 'Resumen descartado por falta de sustento'}</h3>
           <p className="muted small">
-            El modelo escribió esto, el guardrail de Bedrock no pudo respaldarlo contra las notas y el lector recibió, en
-            su lugar, las fuentes para leerlas completas. Sirve para ver qué afirmación se fue de los fragmentos.
+            {rejectedByRelevance(log)
+              ? `El sustento pasó (${fmtNumber(log.groundingScore, 2)}) pero el filtro de relevancia del guardrail dio ${fmtNumber(log.relevanceScore, 2)} (mínimo ${fmtNumber(GUARDRAIL_RELEVANCE_THRESHOLD, 1)}): juzgó que el texto no contesta la pregunta. Con preguntas del tipo "qué dice El País sobre…" suele ser un falso negativo, porque espera una respuesta sobre publicaciones y no la noticia.`
+              : 'El modelo escribió esto, el guardrail de Bedrock no pudo respaldarlo contra las notas y el lector recibió, en su lugar, las fuentes para leerlas completas. Sirve para ver qué afirmación se fue de los fragmentos.'}
           </p>
           <div className="answer answer--rejected">{log.unverifiedAnswer}</div>
         </section>

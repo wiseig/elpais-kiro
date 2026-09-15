@@ -158,6 +158,8 @@ export interface CorpusIndexRecord extends BaseRecord {
   section: string;
   origin: 'feed' | 'dailybrief-api' | 'backfill';
   updatedAt: string;
+  /** Hora de publicación según el feed (ISO). Ausente en registros anteriores al 15/9/2026. */
+  publishedAt?: string;
   removed?: boolean;
   imageUrl?: string;
   deck?: string;

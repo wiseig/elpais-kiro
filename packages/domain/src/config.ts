@@ -246,6 +246,10 @@ export const MODEL_NOVA_PRO = 'us.amazon.nova-pro-v1:0';
 export const MODEL_NOVA_LITE = 'us.amazon.nova-lite-v1:0';
 export const MODEL_NOVA_PREMIER = 'us.amazon.nova-premier-v1:0';
 export const MODEL_TITAN_EMBED = 'amazon.titan-embed-text-v2:0';
+
+/** Umbrales del guardrail de Bedrock (espejo de infrastructure/lib/data-stack.ts). */
+export const GUARDRAIL_GROUNDING_THRESHOLD = 0.7;
+export const GUARDRAIL_RELEVANCE_THRESHOLD = 0.5;
 /** Modelos por defecto. Cuando la cuenta obtenga acceso a Anthropic, basta cambiar la config (sección 6.6). */
 export const DEFAULT_MODEL_CANONICAL = MODEL_NOVA_PRO;
 export const DEFAULT_MODEL_LIGHT = MODEL_NOVA_LITE;

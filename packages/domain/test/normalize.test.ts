@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_INTENT_WORDS, addDays, digestWindowDays, isGreeting, sectionFromUrl, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
+import { DEFAULT_INTENT_WORDS, neutralizeSourceFrame, sourceFrameTopic, addDays, digestWindowDays, isGreeting, sectionFromUrl, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
 import { isUlid, ulid, ulidTime } from '../src/ulid';
 import { hasMetaTalk, isAllowedUrl, startsWithNoCoverage, validateAnswerText, withoutClosingInvitation } from '../src/validators';
 import { questionHash } from '../src/node';
@@ -307,5 +307,25 @@ describe('sectionFromUrl', () => {
     expect(sectionFromUrl('https://www.elpais.com.uy/una-nota', 'informacion')).toBe('informacion');
     expect(sectionFromUrl('', 'informacion')).toBe('informacion');
     expect(sectionFromUrl('no-es-una-url', 'negocios')).toBe('negocios');
+  });
+});
+
+describe('neutralizeSourceFrame', () => {
+  it('saca al diario de sujeto y deja el tema', () => {
+    expect(neutralizeSourceFrame('¿Qué dice El País sobre "Cancillería exhortó a legisladores"?')).toBe('¿Qué se sabe sobre "Cancillería exhortó a legisladores"?');
+    expect(neutralizeSourceFrame('que publico el pais del clásico')).toBe('¿Qué se sabe sobre el clásico?');
+    expect(neutralizeSourceFrame('¿Qué informó El País hoy sobre el dólar?')).toBe('¿Qué se sabe sobre el dólar?');
+  });
+
+  it('no toca preguntas sin ese marco ni las que piden la línea editorial', () => {
+    for (const text of ['¿Qué pasó con el dólar?', '¿Qué opina El País del gobierno?', 'clima', '¿Qué se sabe sobre clima?']) {
+      expect(neutralizeSourceFrame(text)).toBe(text);
+    }
+  });
+
+  it('extrae el tema sin comillas para la búsqueda', () => {
+    expect(sourceFrameTopic('¿Qué dice El País sobre "Cancillería exhortó a legisladores"?')).toBe('Cancillería exhortó a legisladores');
+    expect(sourceFrameTopic('que publico el pais del clásico')).toBe('el clásico');
+    expect(sourceFrameTopic('¿Qué pasó con el dólar?')).toBeUndefined();
   });
 });

@@ -53,8 +53,8 @@ describe('preview Open Graph', () => {
 
 describe('tarjetas de sugerencias', () => {
   it('convierte títulos en preguntas naturales', () => {
-    expect(questionFromTitle('Conflicto portuario: resolución de gobierno deja dudas en TCP')).toBe('¿Qué dice El País sobre "Conflicto portuario"?');
-    expect(questionFromTitle('“Desapareceremos”: los comerciantes de 8 de Octubre')).toBe('¿Qué dice El País sobre "Desapareceremos"?');
+    expect(questionFromTitle('Conflicto portuario: resolución de gobierno deja dudas en TCP')).toBe('¿Qué se sabe sobre "Conflicto portuario"?');
+    expect(questionFromTitle('“Desapareceremos”: los comerciantes de 8 de Octubre')).toBe('¿Qué se sabe sobre "Desapareceremos"?');
     const long = questionFromTitle('Una cita imperdible para descubrir los sabores y aromas del té junto a la sommelier Mónica Devoto en Montevideo');
     expect(long.length).toBeLessThanOrEqual(120);
     expect(long).not.toContain('…');
@@ -110,7 +110,7 @@ describe('tarjetas de sugerencias', () => {
     expect(segundo[0]?.source?.url).toContain('/hoy');
   });
 
-  it('completa con notas recientes del corpus, sin horóscopos y diversificando sección', async () => {
+  it('arma la portada con notas recientes con foto y sin los moldes diarios', async () => {
     resetSuggestionsCache();
     const { deps, store } = buildDeps();
     const day = '2026-09-11';
@@ -126,7 +126,7 @@ describe('tarjetas de sugerencias', () => {
     expect(cards.find((card) => card.source?.url.endsWith('/soja'))?.source?.imageUrl).toContain('soja.jpg');
   });
 
-  it('solo ofrece notas con foto y diversifica sección entre ellas', async () => {
+  it('solo ofrece notas con foto', async () => {
     resetSuggestionsCache();
     const { deps, store } = buildDeps();
     const day = '2026-09-11';
@@ -139,6 +139,29 @@ describe('tarjetas de sugerencias', () => {
     expect(cards).toHaveLength(2);
     expect(cards.every((card) => Boolean(card.source?.imageUrl))).toBe(true);
     expect(cards.some((card) => card.source?.url.endsWith('/sin'))).toBe(false);
-    expect(new Set(cards.map((card) => card.source?.section)).size).toBe(2);
+  });
+
+  it('elige las cuatro más recientes por hora de publicación y se renueva con la versión del corpus', async () => {
+    resetSuggestionsCache();
+    const { store } = buildDeps();
+    const day = '2026-09-11';
+    const base = { contentHash: 'h', s3Key: 'k', date: day, origin: 'feed' as const, section: 'informacion', updatedAt: `${day}T23:00:00Z` };
+    for (const [id, hour] of [['a', '08'], ['b', '12'], ['c', '09'], ['d', '15'], ['e', '11'], ['f', '10']] as const) {
+      await store.putCorpusIndex({ ...base, articleId: id, title: `Nota ${id}`, url: `https://www.elpais.com.uy/${id}`, imageUrl: `https://www.elpais.com.uy/img/${id}.jpg`, publishedAt: `${day}T${hour}:00:00Z` });
+    }
+    // Sin foto y más nueva que todas: no entra.
+    await store.putCorpusIndex({ ...base, articleId: 'sinfoto', title: 'Sin foto', url: 'https://www.elpais.com.uy/sinfoto', publishedAt: `${day}T20:00:00Z` });
+    const now = new Date('2026-09-11T23:30:00Z');
+    const cards = await suggestionCards(store, testConfig(), now);
+    expect(cards.map((card) => card.source?.url.split('/').pop())).toEqual(['d', 'b', 'e', 'f']);
+    expect(cards.every((card) => card.kind === 'recent')).toBe(true);
+
+    // Llega una nota nueva. Con la misma versión del corpus la portada no se toca (todavía no se
+    // puede buscar); con la versión nueva, encabeza.
+    await store.putCorpusIndex({ ...base, articleId: 'g', title: 'Nota g', url: 'https://www.elpais.com.uy/g', imageUrl: 'https://www.elpais.com.uy/img/g.jpg', publishedAt: `${day}T22:00:00Z` });
+    const misma = await suggestionCards(store, testConfig(), now);
+    expect(misma.map((card) => card.source?.url.split('/').pop())).toEqual(['d', 'b', 'e', 'f']);
+    const nueva = await suggestionCards(store, testConfig((c) => { c.corpus.version = 'ing-2'; }), now);
+    expect(nueva.map((card) => card.source?.url.split('/').pop())).toEqual(['g', 'd', 'b', 'e']);
   });
 });
