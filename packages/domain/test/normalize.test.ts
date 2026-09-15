@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_INTENT_WORDS, addDays, digestWindowDays, isGreeting, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
+import { DEFAULT_INTENT_WORDS, addDays, digestWindowDays, isGreeting, sectionFromUrl, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
 import { isUlid, ulid, ulidTime } from '../src/ulid';
 import { hasMetaTalk, isAllowedUrl, startsWithNoCoverage, validateAnswerText, withoutClosingInvitation } from '../src/validators';
 import { questionHash } from '../src/node';
@@ -47,6 +47,11 @@ describe('validadores de salida', () => {
   it('detecta meta-charla', () => {
     expect(hasMetaTalk('Según el fragmento, el dólar subió.')).toBe(true);
     expect(hasMetaTalk('Como IA no puedo opinar.')).toBe(true);
+    // Vocabulario nuestro que se le escapó al modelo y llegó al lector el 15/9/2026.
+    expect(hasMetaTalk('Los fragmentos disponibles hablan sobre el iPhone 18.')).toBe(true);
+    expect(hasMetaTalk('Los fragmentos no mencionan ninguna colonia en Marte.')).toBe(true);
+    // Uso legítimo: una nota puede citar un fragmento de un discurso.
+    expect(hasMetaTalk('Leyó un fragmento del discurso de Orsi ante la Asamblea.')).toBe(false);
     expect(hasMetaTalk('El dólar cerró estable este viernes.')).toBe(false);
   });
   it('reporta párrafos y URLs ajenas', () => {
@@ -287,5 +292,20 @@ describe('secciones pedidas por su nombre', () => {
   it('una pregunta concreta sobre un partido no es un pedido de sección', () => {
     expect(digestSection('¿Qué dijo el Partido Nacional sobre el presupuesto?')).toBeUndefined();
     expect(isDigestRequest('¿Qué dijo el Partido Nacional sobre el presupuesto?')).toBe(false);
+  });
+});
+
+describe('sectionFromUrl', () => {
+  it('saca la subsección del camino, que es donde vive', () => {
+    expect(sectionFromUrl('https://www.elpais.com.uy/informacion/politica/cancilleria-exhorto-a-legisladores')).toBe('informacion/politica');
+    expect(sectionFromUrl('https://www.elpais.com.uy/opinion/la-clave/los-108-anos-de-el-pais')).toBe('opinion/la-clave');
+    expect(sectionFromUrl('https://www.elpais.com.uy/mundo/argentina/milei-articula-politicas')).toBe('mundo/argentina');
+    expect(sectionFromUrl('https://www.elpais.com.uy/ovacion/penarol-gano')).toBe('ovacion');
+  });
+
+  it('cae al valor de respaldo cuando la URL no dice nada', () => {
+    expect(sectionFromUrl('https://www.elpais.com.uy/una-nota', 'informacion')).toBe('informacion');
+    expect(sectionFromUrl('', 'informacion')).toBe('informacion');
+    expect(sectionFromUrl('no-es-una-url', 'negocios')).toBe('negocios');
   });
 });

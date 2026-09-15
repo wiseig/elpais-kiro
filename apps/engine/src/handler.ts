@@ -4,7 +4,7 @@ import { CONSENT_TEXT_VERSIONS, TENANT_ID, isChannelAction, ulid } from '@pelp/d
 import { ConfigProvider } from './core/config';
 import { DynamoDb } from './core/db';
 import { askQuestion, type EngineDeps } from './core/engine';
-import { EventBridgePublisher, awsGuardrails, awsModels, awsRetriever } from './core/gateways';
+import { EventBridgePublisher, S3CorpusBody, awsGuardrails, awsModels, awsRetriever } from './core/gateways';
 import { logger } from './core/log';
 import { deleteReader, needsConsent, readerMode, recordDecision, resolveReader } from './core/readers';
 import { identitySecret } from './core/secrets';
@@ -25,6 +25,7 @@ async function buildDeps(): Promise<WebDeps> {
     retriever: awsRetriever,
     guard: awsGuardrails,
     events: new EventBridgePublisher(process.env.EVENT_BUS_NAME),
+    corpusBody: new S3CorpusBody(process.env.CORPUS_BUCKET),
     log: logger,
     now: () => new Date(),
     secret,

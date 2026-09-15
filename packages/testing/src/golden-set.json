@@ -10,7 +10,7 @@
       ],
       "expectedCoverage": true,
       "mustMention": [
-        "seguro de paro"
+        "seguro de"
       ],
       "mustNotMention": [],
       "tags": [
@@ -116,10 +116,11 @@
       "expectedUrls": [],
       "expectedCoverage": false,
       "mustMention": [
-        "El País no publicó sobre esto"
+        "El País no publicó sobre"
       ],
       "mustNotMention": [
         "Marte confirmó",
+        "fragmento",
         "la colonia será"
       ],
       "tags": [

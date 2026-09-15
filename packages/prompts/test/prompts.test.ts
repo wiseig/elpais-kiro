@@ -209,7 +209,7 @@ describe('prompts versionados', () => {
 
   it('versiones desconocidas fallan explícitamente', () => {
     expect(() => getPrompt('canonical', 'v99')).toThrow();
-    expect(listPromptVersions().canonical).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']);
+    expect(listPromptVersions().canonical).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10']);
     expect(listPromptVersions().rewrite).toEqual(['v1', 'v2', 'v3']);
     expect(listPromptVersions().adaptation).toEqual(['v1', 'v2', 'v3', 'v4']);
     expect(listPromptVersions().profiler).toEqual(['v1', 'v2', 'v3', 'v4']);

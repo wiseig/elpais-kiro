@@ -277,6 +277,21 @@ function namedSection(text: string, sections: readonly DigestSection[]): DigestS
  * Devuelve la sección pedida o `undefined` si la consulta tiene tema propio: "resumen de la
  * política de vivienda" nombra una sección pero pregunta por vivienda, y ahí manda la búsqueda.
  */
+/**
+ * La sección real de una nota. El feed manda solo el primer segmento del slug, así que todas las
+ * subsecciones de "informacion" —política, judiciales, policiales, sociedad— se guardaron como
+ * "informacion" y ninguna se podía pedir por su nombre. La URL sí tiene el camino completo, y está
+ * en el mismo registro: `/informacion/politica/cancilleria-…` da "informacion/politica".
+ */
+export function sectionFromUrl(url: string, fallback = ''): string {
+  const match = /^https?:\/\/[^/]+\/(.+)$/.exec(url.trim());
+  const segments = (match?.[1] ?? '').split('/').filter(Boolean);
+  // El último segmento es el título de la nota, no una sección.
+  const path = segments.slice(0, Math.max(0, segments.length - 1));
+  if (!path.length) return fallback;
+  return path.slice(0, 2).join('/');
+}
+
 export function digestSection(question: string, words: IntentWords = DEFAULT_INTENT_WORDS): DigestSection | undefined {
   const text = foldAccents(question);
   const section = namedSection(text, words.digestSections);

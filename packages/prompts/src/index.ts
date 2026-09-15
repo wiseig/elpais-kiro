@@ -4,6 +4,10 @@ import { CANONICAL_STRICT_SUFFIX_V3, CANONICAL_SYSTEM_V3 } from './canonical.v3'
 import { CANONICAL_STRICT_SUFFIX_V4, CANONICAL_SYSTEM_V4 } from './canonical.v4';
 import { CANONICAL_STRICT_SUFFIX_V5, CANONICAL_SYSTEM_V5 } from './canonical.v5';
 import { CANONICAL_STRICT_SUFFIX_V6, CANONICAL_SYSTEM_V6 } from './canonical.v6';
+import { CANONICAL_STRICT_SUFFIX_V7, CANONICAL_SYSTEM_V7 } from './canonical.v7';
+import { CANONICAL_STRICT_SUFFIX_V8, CANONICAL_SYSTEM_V8 } from './canonical.v8';
+import { CANONICAL_STRICT_SUFFIX_V9, CANONICAL_SYSTEM_V9 } from './canonical.v9';
+import { CANONICAL_STRICT_SUFFIX_V10, CANONICAL_SYSTEM_V10 } from './canonical.v10';
 import { ADAPTATION_SYSTEM_V1 } from './adaptation.v1';
 import { ADAPTATION_SYSTEM_V2 } from './adaptation.v2';
 import { ADAPTATION_SYSTEM_V3 } from './adaptation.v3';
@@ -25,7 +29,7 @@ import { BIAS_JUDGE_SYSTEM_V1 } from './bias-judge.v1';
 export type PromptKind = 'canonical' | 'adaptation' | 'verifier' | 'profiler' | 'rewrite' | 'offTopic' | 'biasJudge' | 'stance';
 
 const STATIC_PROMPTS: Record<Exclude<PromptKind, 'offTopic' | 'stance'>, Record<string, string>> = {
-  canonical: { v1: CANONICAL_SYSTEM_V1, v2: CANONICAL_SYSTEM_V2, v3: CANONICAL_SYSTEM_V3, v4: CANONICAL_SYSTEM_V4, v5: CANONICAL_SYSTEM_V5, v6: CANONICAL_SYSTEM_V6 },
+  canonical: { v1: CANONICAL_SYSTEM_V1, v2: CANONICAL_SYSTEM_V2, v3: CANONICAL_SYSTEM_V3, v4: CANONICAL_SYSTEM_V4, v5: CANONICAL_SYSTEM_V5, v6: CANONICAL_SYSTEM_V6, v7: CANONICAL_SYSTEM_V7, v8: CANONICAL_SYSTEM_V8, v9: CANONICAL_SYSTEM_V9, v10: CANONICAL_SYSTEM_V10 },
   adaptation: { v1: ADAPTATION_SYSTEM_V1, v2: ADAPTATION_SYSTEM_V2, v3: ADAPTATION_SYSTEM_V3, v4: ADAPTATION_SYSTEM_V4 },
   verifier: { v1: VERIFIER_SYSTEM_V1 },
   profiler: { v1: PROFILER_SYSTEM_V1 },
@@ -51,6 +55,10 @@ const STRICT_SUFFIX: Record<string, string> = {
   v4: CANONICAL_STRICT_SUFFIX_V4,
   v5: CANONICAL_STRICT_SUFFIX_V5,
   v6: CANONICAL_STRICT_SUFFIX_V6,
+  v7: CANONICAL_STRICT_SUFFIX_V7,
+  v8: CANONICAL_STRICT_SUFFIX_V8,
+  v9: CANONICAL_STRICT_SUFFIX_V9,
+  v10: CANONICAL_STRICT_SUFFIX_V10,
 };
 
 export function getPrompt(kind: Exclude<PromptKind, 'offTopic' | 'stance'>, version: string): string {
@@ -146,6 +154,10 @@ export {
   CANONICAL_SYSTEM_V4,
   CANONICAL_SYSTEM_V5,
   CANONICAL_SYSTEM_V6,
+  CANONICAL_SYSTEM_V7,
+  CANONICAL_SYSTEM_V8,
+  CANONICAL_SYSTEM_V9,
+  CANONICAL_SYSTEM_V10,
   CANONICAL_STRICT_SUFFIX_V4,
   ADAPTATION_SYSTEM_V1,
   ADAPTATION_SYSTEM_V2,

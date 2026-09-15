@@ -24,6 +24,9 @@ export interface GroundingCheck {
   passed: boolean;
   grounding?: number;
   relevance?: number;
+  /** Cuál de los dos filtros bloqueó. El panorama solo obedece al sustento. */
+  groundingBlocked?: boolean;
+  relevanceBlocked?: boolean;
   blockedByContent: boolean;
 }
 
@@ -99,15 +102,21 @@ export async function checkGrounding(
   let grounding: number | undefined;
   let relevance: number | undefined;
   let groundingBlocked = false;
+  let relevanceBlocked = false;
   let blockedByContent = false;
   for (const assessment of assessments(output)) {
     for (const filter of assessment.contextualGroundingPolicy?.filters ?? []) {
-      if (filter.type === 'GROUNDING') grounding = filter.score;
-      if (filter.type === 'RELEVANCE') relevance = filter.score;
-      if (filter.action === 'BLOCKED') groundingBlocked = true;
+      if (filter.type === 'GROUNDING') {
+        grounding = filter.score;
+        if (filter.action === 'BLOCKED') groundingBlocked = true;
+      }
+      if (filter.type === 'RELEVANCE') {
+        relevance = filter.score;
+        if (filter.action === 'BLOCKED') relevanceBlocked = true;
+      }
     }
     if ((assessment.contentPolicy?.filters ?? []).some((filter) => filter.action === 'BLOCKED')) blockedByContent = true;
     if ((assessment.topicPolicy?.topics ?? []).some((topic) => topic.action === 'BLOCKED')) blockedByContent = true;
   }
-  return { passed: !groundingBlocked && !blockedByContent, grounding, relevance, blockedByContent };
+  return { passed: !groundingBlocked && !relevanceBlocked && !blockedByContent, groundingBlocked, relevanceBlocked, grounding, relevance, blockedByContent };
 }

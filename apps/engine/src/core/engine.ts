@@ -32,6 +32,7 @@ import {
   montevideoDay,
   needsRewrite,
   normalizeQuestion,
+  sectionFromUrl,
   ulid,
   wordListRegex,
 } from '@pelp/domain';
@@ -41,7 +42,7 @@ import { buildOffTopicUserMessage, buildRewriteUserMessage, getDeniedTopicPrompt
 import { budgetState, noteSpend } from './budget';
 import { generateCanonical, sumCost, sumUsage } from './canonical';
 import type { ConfigSource } from './config';
-import type { EventPublisher, GuardrailGateway, ModelGateway, RetrieverGateway } from './gateways';
+import type { CorpusBodyGateway, EventPublisher, GuardrailGateway, ModelGateway, RetrieverGateway } from './gateways';
 import type { Logger } from './log';
 import { adaptAndVerify, evaluateEligibility } from './personalization';
 import { needsConsent, profileSummary, readerMode, resolveReader } from './readers';
@@ -57,6 +58,8 @@ export interface EngineDeps {
   events: EventPublisher;
   log: Logger;
   now: () => Date;
+  /** Cuerpo de las notas para el panorama. Sin esto se cae al título y la bajada. */
+  corpusBody?: CorpusBodyGateway;
 }
 
 export interface EngineResult {
@@ -437,7 +440,10 @@ export function pickForDigest(records: CorpusIndexRecord[], options: DigestOptio
 
 /** "informacion/judiciales" entra por el prefijo "informacion/judiciales" y por "informacion". */
 function inSection(record: CorpusIndexRecord, section: DigestSection): boolean {
-  return section.match.some((prefix) => record.section === prefix || record.section.startsWith(`${prefix}/`));
+  // Se mira la sección guardada y la que dice la URL: el feed manda solo el primer segmento, así
+  // que sin lo segundo ninguna subsección de "informacion" se puede pedir por su nombre.
+  const candidates = [record.section, sectionFromUrl(record.url, record.section)];
+  return section.match.some((prefix) => candidates.some((value) => value === prefix || value.startsWith(`${prefix}/`)));
 }
 
 /**
@@ -469,13 +475,15 @@ async function digestForDay(
     const from = addDays(day, -(windowDays - 1));
     const records = await fromIndex(from, day);
     if (!records.length) return undefined;
-    const chunks = digestChunks(pickForDigest(records, options));
+    const chunks = await digestChunks(deps, pickForDigest(records, options));
     return {
       chunks,
       notice:
-        `El lector pide el panorama de los últimos ${windowDays} días. Los fragmentos son ${chunks.length} de las ` +
-        `${records.length} notas publicadas entre el ${describeDay(from)} y el ${describeDay(day)}, una selección por ` +
-        `sección. Contá lo principal del período y ubicá cada cosa en su día.`,
+        `Los fragmentos son ${chunks.length} de las ${records.length} notas que El País publicó entre el ` +
+        `${describeDay(from)} y el ${describeDay(day)}, una selección por sección. Escribí las noticias del período: ` +
+        `abrí con una oración que nombre el tema y traiga el hecho más importante, y tocá al menos ` +
+        `${Math.min(5, chunks.length)} de las ${chunks.length} notas, una o dos oraciones cada una, ubicando cada hecho ` +
+        `en su día. No abras describiendo el conjunto ni te metas adentro de una nota: de cada una contá lo que pasó.`,
     };
   }
 
@@ -487,20 +495,65 @@ async function digestForDay(
   }
   if (!records.length) return undefined;
 
-  const chunks = digestChunks(pickForDigest(records, options));
+  const chunks = await digestChunks(deps, pickForDigest(records, options));
   const notice =
     target === day
-      ? `El lector pide el panorama del día. Los fragmentos son ${chunks.length} de las ${records.length} notas que El País publicó el ${describeDay(day)}, una selección por sección.`
-      : `El lector pide el panorama del día. Hoy es ${describeDay(day)} y todavía no hay notas publicadas, así que los fragmentos son ${chunks.length} del ${describeDay(target)}. Decilo en la respuesta.`;
+      ? `Los fragmentos son ${chunks.length} de las ${records.length} notas que El País publicó el ${describeDay(day)}, una selección por sección. Escribí las noticias del día: abrí con una oración que nombre el tema y traiga el hecho más importante, y tocá al menos ${Math.min(5, chunks.length)} de las ${chunks.length} notas, una o dos oraciones cada una. No abras describiendo el conjunto ni te metas adentro de una nota: de cada una contá lo que pasó.`
+      : `Hoy es ${describeDay(day)} y todavía no hay notas publicadas, así que los fragmentos son ${chunks.length} del ${describeDay(target)}. Escribí esas noticias, abriendo con la más importante, y decí adentro del texto que son del ${describeDay(target)}.`;
   return { chunks, notice };
 }
 
-/** Las notas del índice como fragmentos, en el orden en que se las va a citar. */
-function digestChunks(records: CorpusIndexRecord[]): RetrievedChunk[] {
+/**
+ * El texto que el modelo y el guardrail van a ver de cada nota. El cuerpo se recorta: un
+ * panorama de ocho notas no entra entero y la entrada es donde está lo que la nota afirma.
+ */
+const DIGEST_BODY_CHARS = 500;
+
+export function digestBody(markdown: string): string {
+  // El .md guardado abre con el título, una lista de metadatos y la bajada citada; el cuerpo
+  // empieza después. Sin sacarlos, el fragmento se llena de "- URL: ..." y no de la noticia.
+  const lines = markdown.split('\n');
+  const body: string[] = [];
+  for (const line of lines) {
+    const text = line.trim();
+    if (!text || text.startsWith('#') || text.startsWith('- ') || text.startsWith('> ')) {
+      if (body.length) body.push('');
+      continue;
+    }
+    body.push(text);
+    if (body.join(' ').length >= DIGEST_BODY_CHARS) break;
+  }
+  return body.join(' ').replace(/\s+/g, ' ').trim().slice(0, DIGEST_BODY_CHARS);
+}
+
+/**
+ * Las notas del índice como fragmentos, en el orden en que se las va a citar. Se trae el cuerpo
+ * de cada una: con el titular solo, el modelo completa los cargos y los nombres de memoria y el
+ * verificador de sustento tira la respuesta entera.
+ */
+async function digestChunks(deps: EngineDeps, records: CorpusIndexRecord[]): Promise<RetrievedChunk[]> {
+  const bodies = await Promise.all(
+    records.map(async (record) => {
+      if (!deps.corpusBody) return undefined;
+      const markdown = await deps.corpusBody.read(record.s3Key).catch(() => undefined);
+      return markdown ? digestBody(markdown) : undefined;
+    }),
+  );
   return records.map((record, position) => ({
     // Sin cuerpo en el índice: el título y la bajada alcanzan para un panorama y son lo que
-    // el guardrail va a usar para medir sustento.
-    text: record.deck ? `${record.title}. ${record.deck}` : record.title,
+    // el guardrail va a usar para medir sustento. La fecha va adentro del texto porque el aviso
+    // le pide al modelo que diga de cuándo son las notas, y el 15/9/2026 ese era justamente el
+    // dato que ninguna fuente respaldaba: la misma respuesta medía 0,31 sin la fecha en la
+    // fuente y 0,82 con ella, y el lector recibía "no pude armar un resumen" sobre un resumen
+    // correcto.
+    text: [
+      `Nota publicada el ${describeDay(record.date)}.`,
+      record.title,
+      record.deck ?? '',
+      bodies[position] ?? '',
+    ]
+      .filter(Boolean)
+      .join(' '),
     score: 1,
     articleId: record.articleId,
     title: record.title,
@@ -534,7 +587,7 @@ async function digestForSection(
 
   const name = section.names[0] ?? '';
   const picked = records.slice(0, options.notes);
-  const chunks = digestChunks(picked);
+  const chunks = await digestChunks(deps, picked);
   const oldest = picked[picked.length - 1]?.date ?? day;
   const newest = picked[0]?.date ?? day;
   const when =
@@ -543,7 +596,11 @@ async function digestForSection(
       : `publicadas entre el ${describeDay(oldest)} y el ${describeDay(newest)}: hoy es ${describeDay(day)} y la sección no tiene notas de hoy`;
   return {
     chunks,
-    notice: `El lector pide el panorama de la sección ${name} de El País. Los fragmentos son ${chunks.length} de las ${records.length} notas de esa sección, ${when}. Decí de cuándo son las notas y no las presentes como del día si no lo son.`,
+    // El aviso no se describe a sí mismo: el modelo copia su encuadre, y cuando el aviso decía
+    // "el panorama de la sección X", abría con "el panorama de la sección X incluye:". Medido el
+    // 15/9/2026, esa apertura costaba 0,09 de sustento y 0,16 de relevancia, que era justo el
+    // margen que faltaba para pasar.
+    notice: `Los fragmentos son ${chunks.length} de las ${records.length} notas de ${name} que El País publicó, ${when}. Escribí las noticias: abrí con una oración que nombre el tema y traiga el hecho más importante, y tocá al menos ${Math.min(5, chunks.length)} de las ${chunks.length} notas, una o dos oraciones cada una, con los nombres y cargos tal como figuran en los fragmentos y ubicando cada hecho en su día. No abras describiendo el conjunto, la sección ni las fechas. No te metas adentro de una nota ni copies enumeraciones que traiga: de cada una contá lo que pasó, no su letra chica.`,
   };
 }
 

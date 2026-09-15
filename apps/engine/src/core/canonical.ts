@@ -14,7 +14,7 @@ import {
 } from '@pelp/domain';
 import { costUsd, parseJsonObject, sourcesFromChunks } from '@pelp/bedrock';
 import { buildCanonicalUserMessage, getCanonicalStrictSuffix, getPrompt } from '@pelp/prompts';
-import type { GuardrailGateway, ModelGateway, RetrieverGateway } from './gateways';
+import type { GroundingCheck, GuardrailGateway, ModelGateway, RetrieverGateway } from './gateways';
 import type { Logger } from './log';
 
 export interface CanonicalDeps {
@@ -229,13 +229,24 @@ export async function generateCanonical(deps: CanonicalDeps, input: CanonicalInp
 
   // El cierre de cortesía no está en ninguna fuente y hundía el puntaje (0,97 → 0,63 medido
   // contra el guardrail): se mide el sustento de lo que se afirma, no de la invitación a leer.
+  /**
+   * El filtro de relevancia pregunta "¿este texto contesta esta pregunta?". Para una pregunta
+   * concreta es una buena red; para un panorama es una pregunta mal planteada: se contesta por
+   * amplitud y ninguna oración suelta repite el tema. Medido el 15/9/2026 con "Noticias sobre
+   * partidos políticos Uruguay", un resumen correcto de cuatro notas dio sustento 0,97 y
+   * relevancia 0,03, y el lector se quedaba sin resumen. El sustento, que es el que protege de
+   * la invención, sigue mandando en los dos casos.
+   */
+  const blocked = (check: GroundingCheck): boolean =>
+    input.digest ? Boolean(check.groundingBlocked ?? !check.passed) || check.blockedByContent : !check.passed;
+
   let grounding = await deps.guard.checkGrounding(
     guardrail,
     { question: input.question, answer: withoutClosingInvitation(draft.answer), sources: groundingSources() },
     input.abortSignal,
   );
   let groundingFailed = false;
-  if (!grounding.passed) {
+  if (blocked(grounding)) {
     groundingFailed = true;
     deps.log.warn('canonical.grounding_retry', { grounding: grounding.grounding, relevance: grounding.relevance, blockedByContent: grounding.blockedByContent });
     deps.log.metric('GroundingFailed', 1);
@@ -254,8 +265,10 @@ export async function generateCanonical(deps: CanonicalDeps, input: CanonicalInp
       { question: input.question, answer: withoutClosingInvitation(strict.answer), sources: groundingSources() },
       input.abortSignal,
     );
-    if (!grounding.passed) {
-      deps.log.warn('canonical.grounding_failed_twice', { grounding: grounding.grounding });
+    if (blocked(grounding)) {
+      // Las dos métricas, no solo el sustento: el guardrail bloquea por cualquiera de las dos y
+      // sin la relevancia en el log hay que adivinar cuál fue.
+      deps.log.warn('canonical.grounding_failed_twice', { grounding: grounding.grounding, relevance: grounding.relevance });
       return unverifiedOutcome(chunks, config, { calls, retried, widened: retrieval.widened, unverifiedAnswer: strict.answer, ...(grounding.grounding !== undefined ? { groundingScore: grounding.grounding } : {}) });
     }
     draft = strict;

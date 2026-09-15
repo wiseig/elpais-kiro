@@ -2,7 +2,7 @@ import type { S3Client } from '@aws-sdk/client-s3';
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { BedrockAgentClient, GetIngestionJobCommand, StartIngestionJobCommand } from '@aws-sdk/client-bedrock-agent';
 import type { Config, CorpusIndexRecord } from '@pelp/domain';
-import { dayToEpoch, keys, topicFromSection } from '@pelp/domain';
+import { dayToEpoch, keys, sectionFromUrl, topicFromSection } from '@pelp/domain';
 import { contentHash, sha256Hex } from '@pelp/domain/node';
 import type { Store } from '@pelp/engine/core';
 
@@ -103,7 +103,9 @@ export function articleFromFeedItem(item: FeedItem, feedDay: string): Article | 
     deck: (item.bajada ?? '').trim(),
     bodyText: body,
     url: item.link.trim(),
-    section: (item.categorySlug ?? '').trim() || 'sin-seccion',
+    // El feed manda solo el primer segmento; la URL trae el camino completo y es la que permite
+    // pedir "noticias de política" y no solo "informacion".
+    section: sectionFromUrl(item.link ?? '', (item.categorySlug ?? '').trim()) || 'sin-seccion',
     date: dayFrom(item.fecha, feedDay),
     ...(item.fecha ? { feedDate: item.fecha } : {}),
     author: (item.autor ?? '').trim(),
@@ -125,7 +127,7 @@ export function articleFromDailyBrief(article: DailyBriefArticle, fallbackDay: s
     deck: (article.deck ?? '').trim(),
     bodyText: body,
     url: article.link.trim(),
-    section: (article.category ?? '').trim() || 'sin-seccion',
+    section: sectionFromUrl(article.link ?? '', (article.category ?? '').trim()) || 'sin-seccion',
     date: feedDate ?? fallbackDay,
     ...(article.feedDate ? { feedDate: article.feedDate } : {}),
     author: (article.source ?? '').trim(),

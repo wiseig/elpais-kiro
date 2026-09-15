@@ -15,6 +15,11 @@ export const META_TALK_PATTERNS: readonly RegExp[] = [
   /\bcomo (una )?(ia|inteligencia artificial|modelo de lenguaje|asistente virtual)\b/i,
   /\bseg[uú]n (el|los) fragmentos?\b/i,
   /\ben (el|los) fragmentos?\b/i,
+  // "Los fragmentos disponibles hablan sobre..." se le escapó al modelo el 15/9/2026 y llegó al
+  // lector: "fragmento" es vocabulario nuestro, no de una nota. Se pide el sujeto o el adjetivo
+  // para no marcar el uso legítimo ("un fragmento del discurso").
+  /\b(los|las) fragmentos? (disponibles?|provistos?|proporcionados?|recibidos?|citados?|entregados?)\b/i,
+  /\b(el|los) fragmentos? (no )?(hablan?|mencionan?|dicen?|indican?|muestran?|incluyen?|contienen?)\b/i,
   /\bla nota dice\b/i,
   /\b(el|los) (contexto|documentos?) (proporcionados?|provistos?|recibidos?)\b/i,
   /\bno tengo acceso\b/i,

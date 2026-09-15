@@ -54,6 +54,7 @@ export class EngineStack extends Stack {
         SERVICE_NAME: 'pelp-engine',
         METRICS_NAMESPACE,
         TABLE_NAME: data.table.tableName,
+        CORPUS_BUCKET: data.corpusBucket.bucketName,
         IDENTITY_SECRET_ARN: data.identitySecret.secretArn,
         KNOWLEDGE_BASE_ID: data.knowledgeBase.attrKnowledgeBaseId,
         DATA_SOURCE_ID: data.dataSource.attrDataSourceId,
@@ -65,6 +66,8 @@ export class EngineStack extends Stack {
       },
     });
     data.table.grantReadWriteData(engine);
+    // El panorama arma su respuesta con el cuerpo de las notas, no con los titulares.
+    data.corpusBucket.grantRead(engine);
     data.identitySecret.grantRead(engine);
     data.eventBus.grantPutEventsTo(engine);
     engine.addToRolePolicy(bedrockModelPolicy(this));

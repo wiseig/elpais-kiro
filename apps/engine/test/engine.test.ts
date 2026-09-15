@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { CorpusIndexRecord, InboundMessage, IncidentRecord, QuestionLogRecord } from '@pelp/domain';
 import { DEFAULT_INTENT_WORDS, NO_COVERAGE_MESSAGE, TENANT_ID, UNVERIFIED_MESSAGE } from '@pelp/domain';
 import { hashChannelIdentity } from '@pelp/domain/node';
-import { askQuestion, asExplicitQuestion, matchDeniedTopic, pickForDigest } from '../src/core/engine';
+import { askQuestion, asExplicitQuestion, digestBody, matchDeniedTopic, pickForDigest } from '../src/core/engine';
 import { channelEnabled, resetChannelCache } from '../src/handler';
 import { normalizeAdaptation } from '../src/core/personalization';
 import { recordDecision, resolveReader } from '../src/core/readers';
@@ -617,11 +617,56 @@ describe('pedidos de panorama del día', () => {
     // Sin búsqueda semántica: el nombre de la sección no es un tema para el índice vectorial.
     expect(retriever.calls).toHaveLength(0);
     const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor'));
-    expect(canonical?.userText).toContain('sección judiciales');
+    expect(canonical?.userText).toContain('notas de judiciales');
     expect(canonical?.userText).toContain('Procesaron al exjerarca');
     expect(canonical?.userText).not.toContain('Peñarol ganó el clásico');
     // Las notas son del 9: la respuesta no puede presentarlas como del día.
     expect(canonical?.userText).toContain('miércoles 9 de setiembre');
+  });
+
+  it('el panorama sobrevive a un rechazo por relevancia, pero no a uno por sustento', async () => {
+    // El filtro de relevancia mide si el texto contesta la pregunta: un panorama contesta por
+    // amplitud y da puntajes bajísimos (0,03 medido) aun con el sustento casi perfecto.
+    const soloRelevancia = fakeGuard({
+      grounding: () => ({ passed: false, groundingBlocked: false, relevanceBlocked: true, grounding: 0.97, relevance: 0.03, blockedByContent: false }),
+    });
+    const first = buildDeps({ guard: soloRelevancia });
+    await consented(first.deps);
+    await first.store.putCorpusIndex({
+      articleId: 'pol-1',
+      contentHash: 'h1',
+      s3Key: 'k1',
+      date: '2026-09-11',
+      title: 'El Partido Colorado presentó un proyecto sobre ocupaciones',
+      url: 'https://www.elpais.com.uy/informacion/politica/proyecto',
+      section: 'informacion/politica',
+      origin: 'feed',
+      updatedAt: '2026-09-11T12:00:00.000Z',
+    });
+    const ok = await askQuestion(first.deps, inbound('Resumen de política'));
+    const texto = ok.answer.blocks.find((block) => block.type === 'text');
+    expect(texto).toBeDefined();
+    expect(texto && 'text' in texto ? texto.text : '').not.toContain(UNVERIFIED_MESSAGE);
+
+    const sinSustento = fakeGuard({
+      grounding: () => ({ passed: false, groundingBlocked: true, relevanceBlocked: false, grounding: 0.06, relevance: 0.9, blockedByContent: false }),
+    });
+    const second = buildDeps({ guard: sinSustento });
+    await consented(second.deps);
+    await second.store.putCorpusIndex({
+      articleId: 'pol-1',
+      contentHash: 'h1',
+      s3Key: 'k1',
+      date: '2026-09-11',
+      title: 'El Partido Colorado presentó un proyecto sobre ocupaciones',
+      url: 'https://www.elpais.com.uy/informacion/politica/proyecto',
+      section: 'informacion/politica',
+      origin: 'feed',
+      updatedAt: '2026-09-11T12:00:00.000Z',
+    });
+    const caido = await askQuestion(second.deps, inbound('Resumen de política'));
+    const caidoTexto = caido.answer.blocks.find((block) => block.type === 'text');
+    expect(caidoTexto && 'text' in caidoTexto ? caidoTexto.text : '').toContain(UNVERIFIED_MESSAGE);
   });
 
   it('el panorama de una sección ignora la lista de secciones excluidas: si la piden, va', async () => {
@@ -839,5 +884,42 @@ describe('consultas sin forma de pregunta', () => {
     await askQuestion(deps, inbound('Frigorífico Tacuarembó'));
     const canonical = models.calls.find((call) => call.system.startsWith('Actuás como editor de El País'));
     expect(canonical?.userText).toContain('¿Qué publicó El País sobre Frigorífico Tacuarembó?');
+  });
+});
+
+describe('digestBody', () => {
+  const markdown = [
+    '# Cancillería exhortó a legisladores a evitar contacto con stand de Malvinas',
+    '',
+    '- Medio: El País (Uruguay)',
+    '- Fecha: 2026-09-14',
+    '- Sección: informacion/politica',
+    '- URL: https://www.elpais.com.uy/informacion/politica/nota',
+    '',
+    '> La queja llegó por la vía diplomática.',
+    '',
+    'El embajador argentino presentó una nota formal ante Cancillería.',
+    'La delegación uruguaya respondió que el stand es de una organización privada.',
+    '',
+  ].join('\n');
+
+  it('se queda con el cuerpo y descarta título, metadatos y bajada', () => {
+    const body = digestBody(markdown);
+    expect(body).toContain('El embajador argentino presentó una nota formal');
+    expect(body).toContain('La delegación uruguaya respondió');
+    expect(body).not.toContain('- URL:');
+    expect(body).not.toContain('Medio: El País');
+    expect(body).not.toContain('La queja llegó por la vía diplomática');
+    expect(body.startsWith('El embajador')).toBe(true);
+  });
+
+  it('recorta el cuerpo largo sin devolver vacío', () => {
+    const largo = ['# T', '', '- Fecha: 2026-09-14', '', 'a'.repeat(3000)].join('\n');
+    const body = digestBody(largo);
+    expect(body.length).toBe(500);
+  });
+
+  it('devuelve vacío cuando la nota no tiene cuerpo', () => {
+    expect(digestBody('# Solo título\n\n- Fecha: 2026-09-14\n')).toBe('');
   });
 });
