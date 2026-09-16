@@ -204,7 +204,7 @@ export class BackofficeStack extends Stack {
         cognito: { userPoolId: userPool.userPoolId, clientId: userPoolClient.userPoolClientId, region: this.region },
       },
       apiRoutes: [{ pathPattern: '/admin/*', api: this.api }],
-      webAclArn: data.webAclCloudFront.attrArn,
+      webAclArn: data.webAclCloudFrontAdmin.attrArn,
       comment: `Preguntale a El País — backoffice (${pelp.envName})`,
     });
 

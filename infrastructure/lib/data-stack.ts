@@ -44,6 +44,8 @@ export class DataStack extends Stack {
   /** ACL del backoffice: igual a la regional pero sin el tope de 8 KB en el cuerpo. */
   readonly webAclAdmin: wafv2.CfnWebACL;
   readonly webAclCloudFront: wafv2.CfnWebACL;
+  /** ACL de la distribución del backoffice: sin el tope de 8 KB en el cuerpo. */
+  readonly webAclCloudFrontAdmin: wafv2.CfnWebACL;
   readonly knowledgeBaseArn: string;
 
   constructor(scope: Construct, id: string, props: DataStackProps) {
@@ -370,6 +372,27 @@ export class DataStack extends Stack {
         managed('AWSManagedRulesCommonRuleSet', 0, ['SizeRestrictions_BODY']),
         managed('AWSManagedRulesKnownBadInputsRuleSet', 1),
         rateRule('rate-admin-per-ip', 2, 300, 60),
+      ],
+    });
+
+    /**
+     * La misma excepción que `webAclAdmin`, pero del lado de CloudFront: el backoffice no habla
+     * con la API directo sino a través de su distribución (`apiBaseUrl` vacío, ruta /admin/*), así
+     * que el cuerpo del PUT pasa por las dos ACL y arreglar solo la regional no alcanzaba.
+     *
+     * Y acá el bloqueo era peor que un error: el SPA mapea 403 → 200 /index.html para que anden
+     * los enlaces profundos, así que un rechazo del WAF le llegaba al navegador como un 200 con
+     * HTML. El backoffice lo guardaba como si fuera la configuración y la pantalla moría (16/9/2026).
+     */
+    this.webAclCloudFrontAdmin = new wafv2.CfnWebACL(this, 'AdminWebWebAcl', {
+      name: `pelp-web-admin${pelp.suffix}`,
+      scope: 'CLOUDFRONT',
+      defaultAction: { allow: {} },
+      visibilityConfig: { sampledRequestsEnabled: true, cloudWatchMetricsEnabled: true, metricName: `pelp-web-admin${pelp.suffix}` },
+      rules: [
+        managed('AWSManagedRulesCommonRuleSet', 0, ['SizeRestrictions_BODY']),
+        managed('AWSManagedRulesKnownBadInputsRuleSet', 1),
+        rateRule('rate-web-admin-per-ip', 2, 600, 300),
       ],
     });
 
