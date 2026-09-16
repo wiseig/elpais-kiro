@@ -193,7 +193,7 @@ export class BackofficeStack extends Stack {
 
     new wafv2.CfnWebACLAssociation(this, 'AdminWaf', {
       resourceArn: `arn:aws:apigateway:${this.region}::/restapis/${this.api.restApiId}/stages/${this.api.deploymentStage.stageName}`,
-      webAclArn: data.webAclRegional.attrArn,
+      webAclArn: data.webAclAdmin.attrArn,
     });
 
     this.hosting = new SpaHosting(this, 'Backoffice', {

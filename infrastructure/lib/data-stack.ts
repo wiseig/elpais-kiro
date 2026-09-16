@@ -41,6 +41,8 @@ export class DataStack extends Stack {
   readonly alarmsTopic: sns.Topic;
   readonly newsroomTopic: sns.Topic;
   readonly webAclRegional: wafv2.CfnWebACL;
+  /** ACL del backoffice: igual a la regional pero sin el tope de 8 KB en el cuerpo. */
+  readonly webAclAdmin: wafv2.CfnWebACL;
   readonly webAclCloudFront: wafv2.CfnWebACL;
   readonly knowledgeBaseArn: string;
 
@@ -297,11 +299,17 @@ export class DataStack extends Stack {
     this.newsroomTopic = new sns.Topic(this, 'Newsroom', { topicName: `pelp-newsroom${pelp.suffix}`, displayName: 'Preguntale a El País — redacción' });
 
     /* --------------------------------- WAF --------------------------------- */
-    const managed = (name: string, priority: number): wafv2.CfnWebACL.RuleProperty => ({
+    const managed = (name: string, priority: number, countRules: string[] = []): wafv2.CfnWebACL.RuleProperty => ({
       name,
       priority,
       overrideAction: { none: {} },
-      statement: { managedRuleGroupStatement: { vendorName: 'AWS', name } },
+      statement: {
+        managedRuleGroupStatement: {
+          vendorName: 'AWS',
+          name,
+          ...(countRules.length ? { ruleActionOverrides: countRules.map((rule) => ({ name: rule, actionToUse: { count: {} } })) } : {}),
+        },
+      },
       visibilityConfig: { sampledRequestsEnabled: true, cloudWatchMetricsEnabled: true, metricName: name },
     });
     const rateRule = (name: string, priority: number, limit: number, windowSec: number, uriContains?: string): wafv2.CfnWebACL.RuleProperty => ({
@@ -341,6 +349,30 @@ export class DataStack extends Stack {
         rateRule('rate-api-per-ip', 3, 300, 60),
       ],
     });
+    /**
+     * El backoffice manda la configuración entera en el cuerpo del PUT, y `SizeRestrictions_BODY`
+     * del conjunto común de AWS bloquea todo cuerpo de más de 8 KB. La configuración pasó los
+     * 9,7 KB y el 16/9/2026 dejó de poder guardarse: medido contra la API, 8.074 bytes daban 401
+     * (llegaba al autorizador) y 8.274 daban 403 (lo frenaba el WAF), con el cuerpo lleno de
+     * letras, así que era el tamaño y no el contenido. API Gateway regional no deja inspeccionar
+     * más de 8 KB, así que la única salida es contar esa regla en vez de bloquear.
+     *
+     * Va en una ACL propia y no en la de la API pública: acá detrás hay un autorizador de Cognito
+     * con grupo admin y el cuerpo legítimo es un documento que va a seguir creciendo; en `/v1/ask`,
+     * que es abierto, el tope de 8 KB sigue siendo una protección que queremos.
+     */
+    this.webAclAdmin = new wafv2.CfnWebACL(this, 'AdminWebAcl', {
+      name: `pelp-admin${pelp.suffix}`,
+      scope: 'REGIONAL',
+      defaultAction: { allow: {} },
+      visibilityConfig: { sampledRequestsEnabled: true, cloudWatchMetricsEnabled: true, metricName: `pelp-admin${pelp.suffix}` },
+      rules: [
+        managed('AWSManagedRulesCommonRuleSet', 0, ['SizeRestrictions_BODY']),
+        managed('AWSManagedRulesKnownBadInputsRuleSet', 1),
+        rateRule('rate-admin-per-ip', 2, 300, 60),
+      ],
+    });
+
     this.webAclCloudFront = new wafv2.CfnWebACL(this, 'WebWebAcl', {
       name: `pelp-web${pelp.suffix}`,
       scope: 'CLOUDFRONT',

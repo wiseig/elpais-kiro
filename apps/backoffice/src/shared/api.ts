@@ -86,10 +86,25 @@ export interface ListResponse<T> {
  * la configuración y la pantalla se destruía entera al leer `config.personalization`: el 16/9/2026
  * el backoffice quedó en blanco al guardar Personalización. Reproducido con un PUT sin `config`.
  */
+/** Qué llegó, en una línea, para poder reportarlo sin abrir las herramientas del navegador. */
+function describePayload(payload: unknown): string {
+  if (payload === null) return 'null';
+  if (typeof payload === 'string') return `texto de ${payload.length} caracteres que empieza con «${payload.slice(0, 40)}»`;
+  if (Array.isArray(payload)) return `una lista de ${payload.length}`;
+  if (typeof payload !== 'object') return typeof payload;
+  const keys = Object.keys(payload as Record<string, unknown>);
+  if (!keys.length) return 'un objeto vacío';
+  const record = payload as Record<string, unknown>;
+  return `un objeto con ${keys.slice(0, 8).join(', ')}${keys.length > 8 ? '…' : ''} (config: ${typeof record.config}, version: ${typeof record.version})`;
+}
+
 function assertConfigResponse(payload: unknown, path: string): ConfigResponse {
   const record = isRecord(payload) ? payload : undefined;
   if (!record || !isRecord(record.config) || typeof record.version !== 'number') {
-    throw new ApiError(502, `El servidor devolvió una respuesta inesperada en ${path}. No se cambió nada en pantalla; probá de nuevo.`, 'bad_payload');
+    // La consola del navegador se queda con el cuerpo entero: es lo que hace falta para
+    // encontrar la causa, y el mensaje de pantalla solo puede llevar un resumen.
+    console.error(`Respuesta inesperada en ${path}`, payload);
+    throw new ApiError(502, `El servidor devolvió una respuesta inesperada en ${path}: llegó ${describePayload(payload)}. No se cambió nada en pantalla; probá de nuevo y pasale esto a quien mantiene el backoffice.`, 'bad_payload');
   }
   return payload as ConfigResponse;
 }

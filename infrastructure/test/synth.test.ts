@@ -1,5 +1,5 @@
 import { App } from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import { ALLOWED_ACCOUNT, ALLOWED_REGION, loadEnv } from '../config/env';
 import { BackofficeStack } from '../lib/backoffice-stack';
@@ -61,6 +61,21 @@ describe('stacks pelp-*', () => {
   it('APIs con WAF, Lambdas Node 22 arm64 y cola con DLQ', () => {
     templates.engine.resourceCountIs('AWS::WAFv2::WebACLAssociation', 1);
     templates.backoffice.resourceCountIs('AWS::WAFv2::WebACLAssociation', 1);
+    // El backoffice manda la configuración entera en el cuerpo: sin contar SizeRestrictions_BODY,
+    // el WAF bloquea todo guardado apenas la configuración pasa los 8 KB (16/9/2026).
+    templates.data.hasResourceProperties('AWS::WAFv2::WebACL', {
+      Name: Match.stringLikeRegexp('^pelp-admin'),
+      Rules: Match.arrayWith([
+        Match.objectLike({
+          Statement: {
+            ManagedRuleGroupStatement: Match.objectLike({
+              Name: 'AWSManagedRulesCommonRuleSet',
+              RuleActionOverrides: [{ Name: 'SizeRestrictions_BODY', ActionToUse: { Count: {} } }],
+            }),
+          },
+        }),
+      ]),
+    });
     templates.engine.hasResourceProperties('AWS::Lambda::Function', { Runtime: 'nodejs22.x', Architectures: ['arm64'], FunctionName: 'pelp-engine-dev' });
     templates.data.hasResourceProperties('AWS::SQS::Queue', { QueueName: 'pelp-inbound-dev' });
     templates.backoffice.hasResourceProperties('AWS::ApiGateway::Authorizer', { Type: 'COGNITO_USER_POOLS' });
