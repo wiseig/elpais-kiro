@@ -161,6 +161,8 @@ export const DEFAULT_INTENT_WORDS: IntentWords = {
     'decime', 'resumime', 'resumi', 'resumen', 'ampliame', 'dame', 'damelo', 'mostrame', 'pasame', 'traeme', 'haceme',
     'hacer', 'armame', 'listame', 'enumerame', 'detallame', 'describime', 'buscame', 'busca', 'quiero', 'necesito',
     'sabes', 'se sabe', 'pregunta', 'preguntame', 'preguntanos', 'preguntar', 'preguntas',
+    // "Noticias sobre X" ya pide algo: envolverlo daba "¿Qué se sabe sobre Noticias sobre X?".
+    'noticias', 'novedades',
   ],
   topicMaxWords: 6,
   digestWords: [

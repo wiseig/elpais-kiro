@@ -90,6 +90,8 @@ export interface MessageRecord extends BaseRecord {
   rewrittenQuestion?: string;
   canonicalAnswer: string;
   adaptedAnswer?: string;
+  /** La adaptación que se intentó y no se sirvió (verificador o formato), para auditarla desde la pregunta. */
+  rejectedAdaptation?: string;
   personalized: boolean;
   hadCoverage: boolean;
   sources: SourceItem[];

@@ -788,6 +788,10 @@ it('vuelve a pedirla con los hechos que faltaban y la sirve si la segunda pasa',
     expect(incident.questionMasked).toContain('Frigorífico Tacuarembó');
     expect(incident.adaptedAnswer).toContain('Para tu bolsillo');
     expect(incident.adaptedAnswer).not.toBe(incident.canonicalAnswer);
+    // Y queda también en el mensaje: la ficha de la pregunta la muestra sin ir al incidente.
+    const message = await store.getMessage(result.answer.conversationId, result.answer.answerId);
+    expect(message?.rejectedAdaptation).toContain('Para tu bolsillo');
+    expect(message?.adaptedAnswer).toBeUndefined();
   });
 
   it('no personaliza con intensidad 0 ni sin evidencia suficiente', async () => {
@@ -853,6 +857,7 @@ describe('consultas sin forma de pregunta', () => {
       'Contame sobre el Frigorífico Tacuarembó',
       'quien es el nuevo ministro',
       'Resumime las noticias de hoy',
+      'Noticias sobre "Latin Grammy 2026"',
     ];
     for (const text of unchanged) expect(asExplicitQuestion(text)).toBe(text.trim().replace(/\s+/g, ' '));
   });

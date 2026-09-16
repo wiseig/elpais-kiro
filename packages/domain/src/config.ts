@@ -3,6 +3,20 @@ import { CONSENT_TEXT_VERSIONS } from './consent/index';
 import { DEFAULT_DIGEST_SECTIONS, DEFAULT_INTENT_WORDS } from './normalize';
 
 /**
+ * Plantillas de las tarjetas de portada, con `{titulo}` en el lugar del título. Se rotan para que
+ * las cuatro no se lean igual. Todas medidas contra el filtro de relevancia del guardrail el
+ * 15/9/2026 con la misma respuesta: "¿Qué se sabe sobre…?" 1,0; "¿Qué hay sobre…?" 1,0;
+ * "Noticias sobre…" 0,89–0,99; "¿Qué pasó con…?" 0,85–1,0. Ninguna pone al diario de sujeto:
+ * "¿Qué dice El País sobre…?" daba 0,02–0,49 y bloqueaba respuestas correctas.
+ */
+export const DEFAULT_CARD_TEMPLATES: readonly string[] = [
+  '¿Qué se sabe sobre "{titulo}"?',
+  'Noticias sobre "{titulo}"',
+  '¿Qué hay sobre "{titulo}"?',
+  '¿Qué pasó con "{titulo}"?',
+];
+
+/**
  * Configuración global (spec v2, sección 13). Un solo JSON, versionado,
  * editable desde el backoffice. La Lambda lo cachea 60 segundos.
  */
@@ -232,6 +246,8 @@ export const ConfigSchema = z.object({
       /** Días de vida de una nota para servir de sugerencia en la portada. */
       freshDays: z.number().int().min(1).max(30).default(3),
       fallback: z.array(z.string()).default([]),
+      /** Plantillas de las tarjetas de portada, con {titulo}. Se rotan en orden. */
+      cardTemplates: z.array(z.string().min(1).refine((value) => value.includes('{titulo}'), 'La plantilla necesita {titulo}')).default([...DEFAULT_CARD_TEMPLATES]),
     })
     .default({}),
 });
@@ -369,7 +385,7 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       offTopic: 'v2',
       biasJudge: 'v1',
     },
-    suggestions: { days: 7, max: 6, freshDays: 3, fallback: DEFAULT_SUGGESTIONS },
+    suggestions: { days: 7, max: 6, freshDays: 3, fallback: DEFAULT_SUGGESTIONS, cardTemplates: [...DEFAULT_CARD_TEMPLATES] },
   } satisfies ConfigInput);
 }
 

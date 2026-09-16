@@ -77,9 +77,17 @@ export async function questionDetail(ctx: AdminContext, msgId: string): Promise<
   const log = await ctx.store.getQuestionLog(msgId);
   if (!log) throw new HttpError(404, 'Pregunta no encontrada.', 'not_found');
   const message = await ctx.store.getMessage(log.convId, msgId).catch(() => undefined);
+  // Los mensajes anteriores al 16/9/2026 no guardaban la adaptación rechazada: se busca en el
+  // incidente del día, que sí la tiene.
+  const rejectedAdaptation =
+    message?.rejectedAdaptation ??
+    (message?.verifierVerdict && !message.verifierVerdict.ok
+      ? (await ctx.store.listIncidents(log.day).catch(() => [])).find((incident) => incident.msgId === msgId)?.adaptedAnswer
+      : undefined);
   return {
     log,
     ...(message?.adaptedAnswer ? { adaptedAnswer: message.adaptedAnswer } : {}),
+    ...(rejectedAdaptation ? { rejectedAdaptation } : {}),
     ...(message?.explain ? { explain: message.explain } : {}),
     ...(message?.verifierVerdict ? { verifier: message.verifierVerdict } : {}),
   };

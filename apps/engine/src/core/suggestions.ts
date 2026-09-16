@@ -1,5 +1,5 @@
 import type { Config, CorpusIndexRecord, QuestionLogRecord, SourceItem } from '@pelp/domain';
-import { daysAgo, isFollowUp, lastDays, montevideoDay, neutralizeSourceFrame, normalizeQuestion } from '@pelp/domain';
+import { DEFAULT_CARD_TEMPLATES, daysAgo, isFollowUp, lastDays, montevideoDay, neutralizeSourceFrame, normalizeQuestion } from '@pelp/domain';
 import type { SuggestionCard, SuggestionsResponse } from '@pelp/domain/api';
 import { GOLDEN_SET } from '@pelp/testing';
 import type { Store } from './store';
@@ -51,8 +51,11 @@ function sourceFromCorpus(record: CorpusIndexRecord): SourceItem {
   };
 }
 
-/** Pregunta natural a partir de un título de nota (para tarjetas "reciente"): cita el título, sin cortar palabras. */
-export function questionFromTitle(title: string): string {
+/**
+ * Pregunta natural a partir de un título de nota (para tarjetas "reciente"): cita el título, sin
+ * cortar palabras, dentro de la plantilla que se le pase (ver DEFAULT_CARD_TEMPLATES).
+ */
+export function questionFromTitle(title: string, template: string = DEFAULT_CARD_TEMPLATES[0] ?? '¿Qué se sabe sobre "{titulo}"?'): string {
   const clean = title.replace(/\s+/g, ' ').replace(/[“”"«»]/g, '').trim();
   const head = (clean.split(/:|\||\?/)[0] ?? clean).trim().replace(/[.,;]+$/, '');
   let short = head;
@@ -60,9 +63,7 @@ export function questionFromTitle(title: string): string {
     const cut = short.slice(0, 90);
     short = cut.slice(0, cut.lastIndexOf(' ') > 40 ? cut.lastIndexOf(' ') : 90).trim();
   }
-  // Sin el diario de sujeto: "¿Qué dice El País sobre…?" le costaba la relevancia del guardrail a
-  // una respuesta correcta (15/9/2026). Misma forma que el envoltorio de temas sueltos.
-  return `¿Qué se sabe sobre "${short}"?`;
+  return template.replace('{titulo}', short);
 }
 
 /** Notas que salen todos los días con el mismo molde: no son novedad para una tarjeta. */
@@ -95,12 +96,14 @@ export async function suggestionCards(store: Store, config: Config, now: Date, t
   } catch {
     recent = [];
   }
+  // Las plantillas se rotan en orden para que las cuatro tarjetas no se lean igual.
+  const templates = config.suggestions.cardTemplates.length ? config.suggestions.cardTemplates : DEFAULT_CARD_TEMPLATES;
   const usedUrls = new Set<string>();
   const cards: SuggestionCard[] = [];
   for (const record of recent.filter((item) => !item.removed && item.imageUrl && !DAILY_FIXTURE.test(`${item.section} ${item.title}`)).sort(newerFirst)) {
     if (usedUrls.has(record.url)) continue;
     usedUrls.add(record.url);
-    cards.push({ question: questionFromTitle(record.title), kind: 'recent', source: sourceFromCorpus(record) });
+    cards.push({ question: questionFromTitle(record.title, templates[cards.length % templates.length]), kind: 'recent', source: sourceFromCorpus(record) });
     if (cards.length >= 4) break;
   }
   cachedCards = { at: Date.now(), day: today, version, cards };

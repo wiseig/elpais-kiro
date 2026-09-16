@@ -160,7 +160,16 @@ function DetailView({ detail }: { detail: QuestionDetail }) {
         </section>
         <section>
           <h3 className="h3">Respuesta adaptada</h3>
-          {detail.adaptedAnswer ? <AnswerText text={detail.adaptedAnswer} /> : <Empty text="No hubo adaptación: se envió la canónica." />}
+          {detail.adaptedAnswer ? (
+            <AnswerText text={detail.adaptedAnswer} />
+          ) : detail.rejectedAdaptation ? (
+            <>
+              <p className="muted small">Se intentó adaptar y no pasó el verificador: el lector vio la canónica. Esta es la adaptación rechazada.</p>
+              <div className="answer answer--rejected">{detail.rejectedAdaptation}</div>
+            </>
+          ) : (
+            <Empty text="No hubo adaptación: se envió la canónica." />
+          )}
           {detail.explain && (
             <p className="muted">
               <strong>Por qué veo esto:</strong> {detail.explain}

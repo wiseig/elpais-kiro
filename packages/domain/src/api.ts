@@ -199,6 +199,8 @@ export type QuestionListItem = Pick<
 export interface QuestionDetail {
   log: QuestionLogRecord;
   adaptedAnswer?: string;
+  /** Adaptación intentada y rechazada: el lector vio la canónica. */
+  rejectedAdaptation?: string;
   explain?: string;
   verifier?: unknown;
 }

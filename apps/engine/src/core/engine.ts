@@ -861,6 +861,7 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
   let explain: string | undefined;
   let adaptedSuggestions: string[] = [];
   let verifierVerdict: VerifierVerdict | undefined;
+  let rejectedAdaptation: string | undefined;
 
   // Adaptar "no pude verificar el resumen" al perfil del lector no tiene sentido.
   const eligibility = evaluateEligibility(config, reader, channel, canonical.hadCoverage && !canonical.unverified, now);
@@ -875,6 +876,9 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
     });
     calls.push(...outcome.calls);
     verifierVerdict = outcome.verdict;
+    // Lo que se intentó y no se sirvió queda en el mensaje: la ficha decía "no hubo adaptación"
+    // con un veredicto de rechazo al lado (16/9/2026).
+    if (!outcome.adapted && outcome.candidate && outcome.candidate.trim() !== canonical.answer.trim()) rejectedAdaptation = outcome.candidate;
     if (outcome.adapted) {
       finalText = outcome.adapted.answer;
       personalized = true;
@@ -937,6 +941,7 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
     personalized,
     explain,
     verifierVerdict,
+    ...(rejectedAdaptation ? { rejectedAdaptation } : {}),
     msgId,
     at,
     day,
@@ -978,6 +983,7 @@ interface PersistInput {
   personalized: boolean;
   explain?: string;
   verifierVerdict?: VerifierVerdict;
+  rejectedAdaptation?: string;
   msgId: string;
   at: string;
   day: string;
@@ -1024,6 +1030,7 @@ async function persist(deps: EngineDeps, input: PersistInput): Promise<void> {
         sources: input.canonical.sources,
         ...(input.explain ? { explain: input.explain } : {}),
         ...(input.verifierVerdict ? { verifierVerdict: input.verifierVerdict } : {}),
+        ...(input.rejectedAdaptation ? { rejectedAdaptation: input.rejectedAdaptation } : {}),
       },
       messageTtl,
       now,

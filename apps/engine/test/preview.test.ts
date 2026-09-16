@@ -186,6 +186,8 @@ describe('tarjetas de sugerencias', () => {
     const cards = await suggestionCards(store, testConfig(), now);
     expect(cards.map((card) => card.source?.url.split('/').pop())).toEqual(['d', 'b', 'e', 'f']);
     expect(cards.every((card) => card.kind === 'recent')).toBe(true);
+    // Las plantillas rotan: las cuatro tarjetas no se leen igual.
+    expect(cards.map((card) => card.question.split(' "')[0])).toEqual(['¿Qué se sabe sobre', 'Noticias sobre', '¿Qué hay sobre', '¿Qué pasó con']);
 
     // Llega una nota nueva. Con la misma versión del corpus la portada no se toca (todavía no se
     // puede buscar); con la versión nueva, encabeza.
