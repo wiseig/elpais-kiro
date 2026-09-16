@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { loadRuntimeConfig, type RuntimeConfig } from './shared/config';
 import { AuthProvider, useAuth } from './shared/AuthContext';
 import { ApiProvider } from './shared/ApiContext';
 import { errorMessage } from './shared/errors';
+import { ErrorBoundary } from './shared/components/ErrorBoundary';
 import { Layout } from './shared/components/Layout';
 import { Spinner } from './shared/components/Spinner';
 import { Login, NotAdmin } from './pages/Login';
@@ -28,12 +29,16 @@ import AlertasPage from './modules/alertas/Page';
 function Shell() {
   const { status, user, runtime, logout } = useAuth();
 
+  // La pantalla actual: al navegar se limpia el error atrapado.
+  const { pathname } = useLocation();
+
   if (status === 'anonymous') return <Login />;
   if (status === 'not-admin') return <NotAdmin />;
 
   return (
     <ApiProvider>
       <Layout email={user?.email ?? ''} env={runtime.env} onLogout={logout}>
+        <ErrorBoundary resetKey={pathname}>
         <Routes>
           <Route path="/" element={<InicioPage />} />
           <Route path="/configuracion" element={<ConfiguracionPage />} />
@@ -54,6 +59,7 @@ function Shell() {
           <Route path="/cuenta" element={<CuentaPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </ErrorBoundary>
       </Layout>
     </ApiProvider>
   );

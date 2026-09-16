@@ -1,0 +1,35 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "chat-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/facundomendez/Documents/elpais-kiro && export PATH=$HOME/.nvm/versions/node/v22.22.0/bin:$PATH && VITE_API_PROXY=https://m2gkn34u2c.execute-api.us-east-1.amazonaws.com/dev corepack pnpm --filter @pelp/chat-web dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "brand-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8787",
+        "-d",
+        "/private/tmp/claude-501/-Users-facundomendez-Documents-elpais-kiro/efe2b8f8-bdd5-4338-90f1-d542ca88a9a3/scratchpad/brand-preview"
+      ],
+      "port": 8787
+    },
+    {
+      "name": "backoffice-mock",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-c",
+        "import os; os.chdir('/Users/facundomendez/Documents/elpais-kiro'); os.environ['PATH']=os.path.expanduser('~/.nvm/versions/node/v22.22.0/bin')+':'+os.environ['PATH']; os.environ['VITE_API_PROXY']='http://localhost:3111'; os.execvp('corepack',['corepack','pnpm','--filter','@pelp/backoffice','dev','--port','5174'])"
+      ],
+      "port": 5174
+    }
+  ]
+}

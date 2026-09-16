@@ -80,6 +80,20 @@ export interface ListResponse<T> {
   items: T[];
 }
 
+/**
+ * Una respuesta de configuración tiene que traer el bloque `config`. Sin esto, un cuerpo raro con
+ * 200 (un despliegue en curso, un intermediario que responde otra cosa) se guardaba como si fuera
+ * la configuración y la pantalla se destruía entera al leer `config.personalization`: el 16/9/2026
+ * el backoffice quedó en blanco al guardar Personalización. Reproducido con un PUT sin `config`.
+ */
+function assertConfigResponse(payload: unknown, path: string): ConfigResponse {
+  const record = isRecord(payload) ? payload : undefined;
+  if (!record || !isRecord(record.config) || typeof record.version !== 'number') {
+    throw new ApiError(502, `El servidor devolvió una respuesta inesperada en ${path}. No se cambió nada en pantalla; probá de nuevo.`, 'bad_payload');
+  }
+  return payload as ConfigResponse;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -181,24 +195,24 @@ export class Api {
 
   /* ---------------------------- Configuración ---------------------------- */
 
-  getConfig(): Promise<ConfigResponse> {
-    return this.get('/config');
+  async getConfig(): Promise<ConfigResponse> {
+    return assertConfigResponse(await this.get('/config'), 'GET /config');
   }
 
-  putConfig(body: PutConfigRequest): Promise<ConfigResponse> {
-    return this.put('/config', body);
+  async putConfig(body: PutConfigRequest): Promise<ConfigResponse> {
+    return assertConfigResponse(await this.put('/config', body), 'PUT /config');
   }
 
   configVersions(): Promise<ListResponse<ConfigVersionSummary>> {
     return this.get('/config/versions');
   }
 
-  configVersion(version: number): Promise<ConfigResponse> {
-    return this.get(`/config/versions/${encodeURIComponent(String(version))}`);
+  async configVersion(version: number): Promise<ConfigResponse> {
+    return assertConfigResponse(await this.get(`/config/versions/${encodeURIComponent(String(version))}`), 'GET /config/versions');
   }
 
-  rollbackConfig(body: RollbackRequest): Promise<ConfigResponse> {
-    return this.post('/config/rollback', body);
+  async rollbackConfig(body: RollbackRequest): Promise<ConfigResponse> {
+    return assertConfigResponse(await this.post('/config/rollback', body), 'POST /config/rollback');
   }
 
   /* ------------------------------ Preguntas ------------------------------ */

@@ -194,14 +194,14 @@ export default function PersonalizacionPage() {
   const config = current.data;
 
   useEffect(() => {
-    if (config) {
+    if (config?.config) {
       setForm(config.config.personalization);
       setChannelsText(config.config.personalization.channels.join(', '));
     }
   }, [config]);
 
-  const merged: Config | null = config && form ? { ...config.config, personalization: { ...form, channels: parseChannels(channelsText) } } : null;
-  const dirty = merged !== null && config !== undefined && JSON.stringify(merged.personalization) !== JSON.stringify(config.config.personalization);
+  const merged: Config | null = config?.config && form ? { ...config.config, personalization: { ...form, channels: parseChannels(channelsText) } } : null;
+  const dirty = merged !== null && config?.config !== undefined && JSON.stringify(merged.personalization) !== JSON.stringify(config.config.personalization);
   const aboveHardMax = form !== null && form.intensity > form.hardMax;
   const level = intensityLevel(form?.intensity ?? 0);
 
@@ -315,6 +315,7 @@ export default function PersonalizacionPage() {
                   className="btn btn--ghost"
                   disabled={!dirty || saver.saving}
                   onClick={() => {
+                    if (!config?.config) return;
                     setForm(config.config.personalization);
                     setChannelsText(config.config.personalization.channels.join(', '));
                   }}
