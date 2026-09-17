@@ -1,67 +1,37 @@
-import { useEffect, useRef, useState } from 'react';
-import { startMicLevel } from '../lib/mic-level';
+import type { OrbState } from '../lib/orb/orb-state';
+import { useAudioLevel } from '../lib/orb/use-audio-level';
+import { ParticlesOrb } from './ParticlesOrb';
 
 /**
- * El orbe del modo voz. Aparece apenas se toca el micrófono y acompaña los tres momentos:
- * escuchando late con la voz de quien habla, pensando gira más rápido y respondiendo ondula
- * despacio. Es CSS puro —sin canvas ni librería— y se queda quieto con `prefers-reduced-motion`.
- *
- * Va por encima de la conversación y no dentro del flujo: metido arriba de la barra de escribir
- * la empujaba fuera de la pantalla (medido, 223 px de alto en una ventana chica).
+ * El orbe del modo voz sobre la conversación. Muestra en qué momento está: escuchando, pensando,
+ * preparando la voz o respondiendo. El texto de abajo va en la tipografía de las respuestas y es
+ * una región viva, así que un lector de pantalla también se entera del cambio de estado.
  */
-export type OrbState = 'listening' | 'thinking' | 'speaking';
-
 const LABEL: Record<OrbState, string> = {
+  idle: '',
+  connecting: 'Preparando la voz…',
   listening: 'Te escucho…',
-  thinking: 'Pensando…',
+  thinking: 'Buscando en las notas…',
   speaking: 'Respondiendo…',
+  error: 'No se pudo escuchar',
+  disabled: '',
 };
 
 export function VoiceOrb({ state, onCancel }: { state: OrbState; onCancel: () => void }) {
-  const [level, setLevel] = useState(0);
-  const frameRef = useRef<number | null>(null);
+  // El micrófono solo se mide mientras escucha: el audio anima el orbe y nada más. Si no hay
+  // permiso para medirlo, el orbe se anima solo; quién decide si el dictado falló es el
+  // reconocimiento, no el medidor, así que acá no se muestra ningún error.
+  const { levelRef } = useAudioLevel(state === 'listening');
+  const visible: OrbState = state;
 
-  // El micrófono se mide solo mientras escucha: el audio no se graba ni sale del dispositivo.
-  useEffect(() => {
-    if (state !== 'listening') {
-      setLevel(0);
-      return undefined;
-    }
-    let cancelled = false;
-    let mic: Awaited<ReturnType<typeof startMicLevel>> = null;
-    void startMicLevel().then((result) => {
-      if (cancelled) {
-        result?.stop();
-        return;
-      }
-      mic = result;
-      if (!mic) return;
-      const tick = () => {
-        if (cancelled || !mic) return;
-        setLevel(mic.read());
-        frameRef.current = requestAnimationFrame(tick);
-      };
-      tick();
-    });
-    return () => {
-      cancelled = true;
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
-      mic?.stop();
-    };
-  }, [state]);
-
-  const scale = state === 'listening' ? 1 + Math.min(0.4, level * 0.5) : 1;
   return (
     <div className="voice-overlay">
-      <div className={`orb orb--${state}`} role="status" aria-live="polite">
-        <div className="orb-ring" style={{ transform: `scale(${scale.toFixed(3)})` }}>
-          <span className="orb-blob orb-blob--1" />
-          <span className="orb-blob orb-blob--2" />
-          <span className="orb-blob orb-blob--3" />
-        </div>
-        <p className="orb-label">{LABEL[state]}</p>
-        <button type="button" className="orb-cancel" onClick={onCancel}>
+      <div className="voice-panel">
+        <ParticlesOrb state={visible} size={168} speed={1} colorFrom="#818cf8" colorTo="#22d3ee" levelRef={levelRef} label="Asistente de voz" />
+        <p className="voice-status" role="status" aria-live="polite" aria-atomic="true">
+          {LABEL[visible]}
+        </p>
+        <button type="button" className="voice-cancel" onClick={onCancel}>
           Cortar
         </button>
       </div>

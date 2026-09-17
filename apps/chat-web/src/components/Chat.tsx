@@ -507,7 +507,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
 
       {listening || voiceTurn ? (
 
-        <VoiceOrb state={speaking ? 'speaking' : loading || preparing ? 'thinking' : 'listening'} onCancel={cortarVoz} />
+        <VoiceOrb state={speaking ? 'speaking' : preparing ? 'connecting' : loading ? 'thinking' : 'listening'} onCancel={cortarVoz} />
 
       ) : null}
 

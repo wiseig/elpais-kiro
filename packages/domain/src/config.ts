@@ -281,7 +281,7 @@ export const ConfigSchema = z.object({
             .default({}),
           pro: z
             .object({
-              voice: z.string().min(1).default('Pedro'),
+              voice: z.string().min(1).default('Mia'),
               engine: z.enum(['standard', 'neural', 'generative', 'long-form']).default('generative'),
               browserVoice: z.boolean().default(false),
             })
@@ -442,12 +442,12 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       maxChars: 9000,
       defaultPlan: 'base',
       urlTtlMinutes: 60,
-      // Las dos voces son es-US, las más neutras para un oído rioplatense: las es-ES suenan
-      // peninsulares. Pedro se eligió escuchando cinco candidatas sobre la misma nota (17/9/2026).
+      // Pro va en es-MX (Mia) y base en es-US (Lupe): las es-ES suenan peninsulares y chocan acá.
+      // De las dos voces mexicanas, "Andrés" no es un id que la API acepte, así que queda Mia.
       // Pro va en `generative`, que es bastante más natural que `neural`: escuchadas las dos el
       // 17/9/2026, neural sonaba plana. `long-form` suena todavía mejor y está pensado para leer
       // notas, pero solo existe en español peninsular.
-      plans: { base: { voice: 'Lupe', engine: 'standard', browserVoice: true }, pro: { voice: 'Pedro', engine: 'generative', browserVoice: false } },
+      plans: { base: { voice: 'Lupe', engine: 'standard', browserVoice: true }, pro: { voice: 'Mia', engine: 'generative', browserVoice: false } },
     },
     suggestions: { days: 7, max: 6, freshDays: 3, fallback: DEFAULT_SUGGESTIONS, cardTemplates: [...DEFAULT_CARD_TEMPLATES] },
   } satisfies ConfigInput);
