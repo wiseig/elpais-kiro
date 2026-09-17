@@ -145,6 +145,21 @@ export const ConfigSchema = z.object({
       enabled: z.boolean(),
       threshold: z.number().min(0).max(1),
       model: modelId.default('us.amazon.nova-lite-v1:0'),
+      /**
+       * Antes de descartar una pregunta por fuera de alcance se la compara con lo publicado: si
+       * hay una nota que la cubre, manda el corpus y no el clasificador.
+       */
+      corpusCheck: z
+        .object({
+          enabled: z.boolean().default(true),
+          /** Puntaje mínimo del mejor fragmento recuperado. */
+          minScore: z.number().min(0).max(1).default(0.5),
+          /** Cuánto de la pregunta tiene que aparecer en la nota (0 a 1). */
+          minOverlap: z.number().min(0).max(1).default(0.5),
+          /** Días de titulares que se miran textualmente, además de la búsqueda semántica. */
+          titleDays: z.number().int().min(0).max(30).default(7),
+        })
+        .default({}),
     }),
     allowedUrlHosts: z.array(z.string()),
   }),
@@ -349,7 +364,7 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       maxQuestionChars: 500,
       deniedTopics: ['apuestas', 'diagnóstico médico personal', 'asesoría legal o financiera personal'],
       blockedWords: [],
-      offTopicClassifier: { enabled: true, threshold: 0.7, model: DEFAULT_MODEL_LIGHT },
+      offTopicClassifier: { enabled: true, threshold: 0.7, model: DEFAULT_MODEL_LIGHT, corpusCheck: { enabled: true, minScore: 0.5, minOverlap: 0.5, titleDays: 7 } },
       allowedUrlHosts: ['www.elpais.com.uy', 'elpais.com.uy'],
     },
     limits: {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_INTENT_WORDS, neutralizeSourceFrame, sourceFrameTopic, addDays, digestWindowDays, isGreeting, sectionFromUrl, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
+import { DEFAULT_INTENT_WORDS, neutralizeSourceFrame, sourceFrameTopic, topicOverlap, addDays, digestWindowDays, isGreeting, sectionFromUrl, dayToEpoch, daysBetweenDays, describeDay, digestSection, futureDayOffset, isDigestRequest, isTimeSensitive, needsRewrite, normalizeQuestion } from '../src/normalize';
 import { isUlid, ulid, ulidTime } from '../src/ulid';
 import { hasMetaTalk, isAllowedUrl, startsWithNoCoverage, validateAnswerText, withoutClosingInvitation } from '../src/validators';
 import { questionHash } from '../src/node';
@@ -327,5 +327,24 @@ describe('neutralizeSourceFrame', () => {
     expect(sourceFrameTopic('¿Qué dice El País sobre "Cancillería exhortó a legisladores"?')).toBe('Cancillería exhortó a legisladores');
     expect(sourceFrameTopic('que publico el pais del clásico')).toBe('el clásico');
     expect(sourceFrameTopic('¿Qué pasó con el dólar?')).toBeUndefined();
+  });
+});
+
+describe('topicOverlap', () => {
+  it('reconoce la nota de la que salió la pregunta', () => {
+    const titular = '¿Puedo hacer una llamada desde el avión? Lo que dice la normativa uruguaya';
+    expect(topicOverlap('¿Puedo hacer una llamada?', titular)).toBeGreaterThanOrEqual(0.5);
+    expect(topicOverlap('¿Qué se sabe sobre "Cancillería y Malvinas"?', 'Cancillería y Malvinas: Csukasi reconoció confusión')).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('no confunde rozar un tema con cubrirlo', () => {
+    const nutricion = 'Por qué después de comer queremos algo dulce: hábito, hambre y placer';
+    expect(topicOverlap('Dame una receta de torta de chocolate para esta noche', nutricion)).toBeLessThan(0.5);
+    expect(topicOverlap('¿A qué le apuesto en el clásico?', 'Peñarol y Nacional juegan el domingo')).toBeLessThan(0.5);
+  });
+
+  it('devuelve 0 sin palabras con carga', () => {
+    expect(topicOverlap('¿qué hay de esto?', 'Cualquier nota')).toBe(0);
+    expect(topicOverlap('', 'Cualquier nota')).toBe(0);
   });
 });

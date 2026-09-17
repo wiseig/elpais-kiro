@@ -54,11 +54,25 @@ describe('preview Open Graph', () => {
 describe('tarjetas de sugerencias', () => {
   it('convierte títulos en preguntas naturales', () => {
     expect(questionFromTitle('Conflicto portuario: resolución de gobierno deja dudas en TCP')).toBe('¿Qué se sabe sobre "Conflicto portuario"?');
-    expect(questionFromTitle('“Desapareceremos”: los comerciantes de 8 de Octubre')).toBe('¿Qué se sabe sobre "Desapareceremos"?');
+    // La cita sola no dice de qué se trata: el tema es lo que viene después.
+    expect(questionFromTitle('“Desapareceremos”: los comerciantes de 8 de Octubre')).toBe('¿Qué se sabe sobre "los comerciantes de 8 de Octubre"?');
     const long = questionFromTitle('Una cita imperdible para descubrir los sabores y aromas del té junto a la sommelier Mónica Devoto en Montevideo');
     expect(long.length).toBeLessThanOrEqual(120);
     expect(long).not.toContain('…');
     expect(long.endsWith('"?')).toBe(true);
+  });
+
+  it('ofrece tal cual un titular que ya es pregunta', () => {
+    // Envolverlo lo partía en el signo: '¿Qué se sabe sobre "¿Puedo hacer una llamada"?'.
+    expect(questionFromTitle('¿Puedo hacer una llamada desde el avión? Lo que dice la normativa')).toBe('¿Puedo hacer una llamada desde el avión?');
+    expect(questionFromTitle('¿Cómo está el déficit del Fonasa?')).toBe('¿Cómo está el déficit del Fonasa?');
+    // Titular que abre con una cita: el tema viene después, no es la cita.
+    expect(questionFromTitle('“¿Puedo hacer una llamada?”: el video del arresto de Raheem Sterling mientras manejaba drogado')).toBe(
+      '¿Qué se sabe sobre "el video del arresto de Raheem Sterling mientras manejaba drogado"?',
+    );
+    expect(questionFromTitle('"Fue un error": el descargo del ministro tras la polémica')).toBe('¿Qué se sabe sobre "el descargo del ministro tras la polémica"?');
+    // Un titular normal sigue usando la plantilla.
+    expect(questionFromTitle('Conflicto portuario: resolución de gobierno deja dudas en TCP')).toBe('¿Qué se sabe sobre "Conflicto portuario"?');
   });
 
   it('descarta tendencias apoyadas en notas viejas y usa la actualidad', async () => {

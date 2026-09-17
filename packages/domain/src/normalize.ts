@@ -92,6 +92,46 @@ export function foldAccents(text: string): string {
 }
 
 /**
+ * Palabras sin carga informativa: no distinguen un tema de otro, así que no cuentan al comparar
+ * una pregunta con el titular de una nota.
+ */
+const EMPTY_WORDS = new Set([
+  'que', 'quien', 'cual', 'como', 'cuando', 'donde', 'cuanto', 'porque', 'sobre', 'para', 'entre',
+  'desde', 'hasta', 'entonces', 'tambien', 'entre', 'este', 'esta', 'esto', 'estos', 'estas',
+  'ese', 'esa', 'eso', 'esos', 'esas', 'aquel', 'aquella', 'entre', 'entre', 'pero', 'mientras',
+  'todo', 'toda', 'todos', 'todas', 'otro', 'otra', 'otros', 'otras', 'mucho', 'mucha', 'muchos',
+  'muchas', 'poco', 'poca', 'pocos', 'pocas', 'algun', 'alguna', 'algunos', 'algunas', 'nada',
+  'algo', 'cosa', 'cosas', 'tema', 'temas', 'saber', 'sabe', 'hacer', 'hace', 'puedo', 'puede',
+  'pueden', 'tiene', 'tienen', 'tengo', 'hay', 'hubo', 'esta', 'estan', 'ser', 'son', 'era',
+  'fue', 'fueron', 'dice', 'dijo', 'dicen', 'noticias', 'noticia', 'nota', 'notas', 'pais',
+  'uruguay', 'uruguayo', 'uruguaya', 'diario', 'publico', 'publica', 'publicado',
+]);
+
+/** Las palabras de un texto que de verdad nombran algo, sin acentos y en minúscula. */
+export function contentWords(text: string): Set<string> {
+  const words = foldAccents(text.toLowerCase())
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 4 && !EMPTY_WORDS.has(word));
+  return new Set(words);
+}
+
+/**
+ * Cuánto de la pregunta aparece en el texto de una nota, entre 0 y 1. Sirve para no descartar por
+ * "fuera de alcance" algo que El País sí publicó: el 16/9/2026 la tarjeta de una nota titulada
+ * "¿Puedo hacer una llamada…?" se bloqueó como fuera de tema, porque suelta parece un pedido de
+ * hacer una llamada. Compara palabras con carga, así que una receta no "coincide" con una nota de
+ * nutrición solo por hablar las dos de comida.
+ */
+export function topicOverlap(question: string, articleText: string): number {
+  const asked = contentWords(question);
+  if (!asked.size) return 0;
+  const published = contentWords(articleText);
+  let shared = 0;
+  for (const word of asked) if (published.has(word)) shared += 1;
+  return shared / asked.size;
+}
+
+/**
  * Listas que deciden cómo se lee una consulta. Viven en la configuración para que la redacción
  * pueda agregar formas nuevas sin tocar código ni desplegar.
  */

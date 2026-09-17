@@ -131,6 +131,58 @@ describe('puerta de entrada y límites', () => {
     expect(blocked.notice).toBe('blocked');
   });
 
+  it('reconoce el titular aunque la búsqueda semántica no lo encuentre', async () => {
+    // Una tarjeta cita el titular tal cual; un fragmento corto y genérico no se parece a nada en
+    // el índice vectorial, así que los titulares se miran textualmente (16/9/2026).
+    const models = fakeModels({ offTopicJson: () => JSON.stringify({ offTopic: true, confidence: 0.95, deniedTopic: null }) });
+    const retriever = fakeRetriever([chunk({ title: 'Médicos en el limbo', text: 'Otra cosa por completo.', score: 0.63 })]);
+    const { deps, store } = buildDeps({ models, retriever });
+    await consented(deps);
+    await store.putCorpusIndex({
+      articleId: 'sterling',
+      contentHash: 'h',
+      s3Key: 'k',
+      date: '2026-09-11',
+      title: '“¿Puedo hacer una llamada?”: el video del arresto de Raheem Sterling',
+      url: 'https://www.elpais.com.uy/ovacion/sterling',
+      section: 'ovacion',
+      origin: 'feed',
+      updatedAt: '2026-09-11T12:00:00.000Z',
+    });
+    const result = await askQuestion(deps, inbound('¿Qué hay sobre "¿Puedo hacer una llamada"?'));
+    expect(result.notice).not.toBe('off_topic');
+  });
+
+  it('no descarta por fuera de alcance lo que El País sí publicó', async () => {
+    // Titular que es una pregunta: suelto parece un pedido de hacer una llamada, y el
+    // clasificador lo marcaba fuera de tema (16/9/2026).
+    const models = fakeModels({ offTopicJson: () => JSON.stringify({ offTopic: true, confidence: 0.95, deniedTopic: null }) });
+    const retriever = fakeRetriever([
+      chunk({
+        title: '¿Puedo hacer una llamada desde el avión? Lo que dice la normativa uruguaya',
+        text: 'La normativa uruguaya permite hacer una llamada solo con el avión en tierra.',
+        score: 0.71,
+      }),
+    ]);
+    const { deps } = buildDeps({ models, retriever });
+    await consented(deps);
+    const result = await askQuestion(deps, inbound('¿Puedo hacer una llamada desde el avión?'));
+    expect(result.notice).not.toBe('off_topic');
+    expect(result.answer.hadCoverage).toBe(true);
+  });
+
+  it('sigue descartando lo que no está publicado, aunque roce un tema parecido', async () => {
+    const models = fakeModels({ offTopicJson: () => JSON.stringify({ offTopic: true, confidence: 0.95, deniedTopic: null }) });
+    const retriever = fakeRetriever([
+      chunk({ title: 'Por qué después de comer queremos algo dulce', text: 'Hábito, hambre y placer según los nutricionistas.', score: 0.68 }),
+    ]);
+    const { deps, store } = buildDeps({ models, retriever });
+    await consented(deps);
+    const result = await askQuestion(deps, inbound('Dame una receta de torta de chocolate para esta noche'));
+    expect(result.notice).toBe('off_topic');
+    expect((await store.listBlocks('2026-09-11')).some((b) => b.kind === 'off_topic')).toBe(true);
+  });
+
   it('no veda el tema si la segunda pasada no lo confirma', async () => {
     // Nova Lite marcaba "apuestas" en preguntas sobre ajedrez o sobre Apple y citaba cualquier fragmento.
     const models = fakeModels({

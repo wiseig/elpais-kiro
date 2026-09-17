@@ -56,7 +56,24 @@ function sourceFromCorpus(record: CorpusIndexRecord): SourceItem {
  * cortar palabras, dentro de la plantilla que se le pase (ver DEFAULT_CARD_TEMPLATES).
  */
 export function questionFromTitle(title: string, template: string = DEFAULT_CARD_TEMPLATES[0] ?? '¿Qué se sabe sobre "{titulo}"?'): string {
-  const clean = title.replace(/\s+/g, ' ').replace(/[“”"«»]/g, '').trim();
+  const raw = title.replace(/\s+/g, ' ').trim();
+
+  // Titular que abre con una cita: lo que nombra el tema viene después. Sacar las comillas primero
+  // dejaba la cita sola, y con «“¿Puedo hacer una llamada?”: el video del arresto de Raheem
+  // Sterling» la tarjeta ofrecía "¿Puedo hacer una llamada?", que no dice de qué se trata y que el
+  // clasificador de alcance leía como un pedido de hacer una llamada (16/9/2026).
+  const quoted = /^[“"«']/.test(raw) ? raw.slice(1).split(/[”"»']/) : undefined;
+  const afterQuote = quoted && quoted.length > 1 ? quoted.slice(1).join('').replace(/^[\s:,;-]+/, '').trim() : '';
+
+  const clean = (afterQuote || raw).replace(/[“”"«»]/g, '').trim();
+
+  // Un titular que ya es una pregunta se ofrece tal cual: envolverlo lo partía en el signo.
+  if (clean.startsWith('¿')) {
+    const end = clean.indexOf('?');
+    const pregunta = end === -1 ? `${clean}?` : clean.slice(0, end + 1);
+    if (pregunta.length <= 120) return pregunta;
+  }
+
   const head = (clean.split(/:|\||\?/)[0] ?? clean).trim().replace(/[.,;]+$/, '');
   let short = head;
   if (short.length > 90) {

@@ -37,6 +37,7 @@ import {
   wordListRegex,
   neutralizeSourceFrame,
   sourceFrameTopic,
+  topicOverlap,
 } from '@pelp/domain';
 import { questionHash } from '@pelp/domain/node';
 import { costUsd, parseJsonObject } from '@pelp/bedrock';
@@ -231,6 +232,61 @@ interface ClassifyOutcome {
   /** Cita textual de la pregunta con la que el clasificador justificó el tema vedado. */
   evidence?: string;
   calls: ModelCall[];
+}
+
+/**
+ * ¿El País publicó algo que cubra esta pregunta? El clasificador de alcance juzga la pregunta
+ * suelta y se equivoca con los titulares que son preguntas: el 16/9/2026 descartó por fuera de
+ * tema la tarjeta de una nota titulada "¿Puedo hacer una llamada…?", que suelta parece un pedido
+ * de hacer una llamada. Acá manda el corpus.
+ *
+ * Se piden las dos cosas: que el índice traiga un fragmento con buen puntaje y que la nota
+ * realmente hable de lo que se pregunta. Sin lo segundo alcanzaría con rozar el tema y una receta
+ * de torta pasaría por parecerse a una nota de nutrición.
+ */
+async function publishedCovers(deps: EngineDeps, config: Config, question: string, day: string, now: Date): Promise<boolean> {
+  const check = config.guardrails.offTopicClassifier.corpusCheck;
+  if (!check.enabled) return false;
+
+  // Primero los titulares, textualmente. La búsqueda semántica no sirve para esto: una tarjeta
+  // cita el titular tal cual y un fragmento corto y genérico no se parece a nada en el espacio de
+  // embeddings. Medido el 16/9/2026, "¿Puedo hacer una llamada" traía notas de médicos y del
+  // dólar, y la nota de la que salía solo aparecía buscando "arresto de Raheem Sterling".
+  if (check.titleDays > 0) {
+    try {
+      const records = await deps.store.listCorpusByDate(addDays(day, -check.titleDays), day, 300);
+      const hit = records.find((record) => !record.removed && topicOverlap(question, record.title) >= check.minOverlap);
+      if (hit) {
+        deps.log.info('classifier.title_match', { title: hit.title.slice(0, 90) });
+        return true;
+      }
+    } catch (error) {
+      deps.log.warn('classifier.title_check_failed', { error: String(error) });
+    }
+  }
+
+  try {
+    const { chunks } = await deps.retriever.retrieve({
+      knowledgeBaseId: config.corpus.knowledgeBaseId,
+      query: sourceFrameTopic(question) ?? cleanQuestion(question),
+      retrieval: config.answering.retrieval,
+      maxSources: config.answering.maxSources,
+      allowedUrlHosts: config.guardrails.allowedUrlHosts,
+      now,
+    });
+    for (const chunk of chunks) {
+      if (chunk.score < check.minScore) continue;
+      if (topicOverlap(question, `${chunk.title} ${chunk.text}`) >= check.minOverlap) {
+        deps.log.info('classifier.corpus_match', { title: chunk.title.slice(0, 90), score: chunk.score });
+        return true;
+      }
+    }
+    return false;
+  } catch (error) {
+    // Sin respuesta del índice se respeta al clasificador: no es momento de adivinar.
+    deps.log.warn('classifier.corpus_check_failed', { error: String(error) });
+    return false;
+  }
 }
 
 async function classify(deps: EngineDeps, config: Config, question: string): Promise<ClassifyOutcome> {
@@ -775,6 +831,12 @@ export async function askQuestion(deps: EngineDeps, inbound: InboundMessage): Pr
     await recordBlock(deps, channel, 'denied_topic', masked, `${classification.deniedTopic} · evidencia: "${classification.evidence ?? ''}"`);
     await recordCosts(deps, calls, day, channel);
     return blockedNotice(deps, { config, reader, inbound, question: masked, kind: 'denied_topic', text: CANNED.blocked, code: 'blocked', day, startedAt, calls });
+  }
+  if (classification.offTopic && (await publishedCovers(deps, config, scoped, day, now))) {
+    // El clasificador mira la pregunta sola; acá se mira lo que el diario publicó, que es la
+    // fuente de verdad sobre qué está dentro de alcance.
+    deps.log.info('classifier.off_topic_overridden', { question: masked.slice(0, 120) });
+    classification.offTopic = false;
   }
   if (classification.offTopic) {
     await recordBlock(deps, channel, 'off_topic', masked);
