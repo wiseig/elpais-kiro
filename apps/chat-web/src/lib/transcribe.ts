@@ -14,6 +14,13 @@ import type { ListenHandlers } from './listen';
 const SILENCE_MS = 1600;
 const NO_SPEECH_MS = 7000;
 const MAX_MS = 25000;
+/**
+ * Si el socket no abre en este tiempo, se falla enseguida. Sin esto, en una red que bloquee el
+ * puerto 8443 el reloj de silencio nunca arranca (se arma al abrir) y quien habla ve "Te
+ * escucho…" 25 segundos hasta el tope duro. Medido el 17/9/2026 en un entorno con ese puerto
+ * filtrado: la conexión quedaba colgada sin abrir, cerrar ni fallar.
+ */
+const CONNECT_MS = 4000;
 
 const toUtf8 = (bytes: Uint8Array): string => new TextDecoder().decode(bytes);
 const fromUtf8 = (text: string): Uint8Array => new TextEncoder().encode(text);
@@ -133,7 +140,12 @@ export function startTranscribe(api: ApiClient, handlers: ListenHandlers): () =>
       ws = new WebSocket(firma.url);
       ws.binaryType = 'arraybuffer';
 
+      const conexion = setTimeout(() => {
+        if (ws?.readyState !== WebSocket.OPEN) fallar('no-connect');
+      }, CONNECT_MS);
+
       ws.onopen = () => {
+        clearTimeout(conexion);
         if (!context || !processor) return;
         processor.onaudioprocess = (event) => {
           if (ws?.readyState !== WebSocket.OPEN) return;
