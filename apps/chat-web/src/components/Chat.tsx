@@ -16,7 +16,8 @@ import {
   type ChatItem,
   type ConversationSummary,
 } from '../lib/history';
-import { startHum, stopHum } from '../lib/hum';
+import { unlockAudio, voiceAudioElement } from '../lib/audio-unlock';
+import { primeHum, startHum, stopHum } from '../lib/hum';
 import { startListening } from '../lib/listen';
 import { getSttProvider } from '../lib/stt-provider';
 import { startTranscribe } from '../lib/transcribe';
@@ -164,6 +165,9 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
    */
   function interrumpir() {
     if (!voiceModeRef.current) return;
+    // Es un toque: sirve para volver a habilitar el audio en el teléfono.
+    unlockAudio();
+    primeHum();
     turnoRef.current += 1;
     stopHum();
     stopSpeaking();
@@ -181,6 +185,10 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
       salirDeVoz();
       return;
     }
+    // El toque del micrófono es el único gesto que hay antes de que suene la respuesta: acá se
+    // habilita el reproductor, la voz del navegador y el contexto del "mmm".
+    unlockAudio();
+    primeHum();
     voiceModeRef.current = true;
     setVoiceMode(true);
     escuchar();
@@ -234,10 +242,12 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
       .answerAudioUrl(answer.answerId, preferencia)
       .then(async (url) => {
         if (!vigente()) return;
-        const audio = new Audio(url);
+        // El mismo reproductor que se desbloqueó con el toque: uno nuevo no tendría permiso.
+        const audio = voiceAudioElement();
         answerAudioRef.current = audio;
         audio.onended = terminar;
         audio.onerror = terminar;
+        audio.src = url;
         await audio.play();
         stopHum();
         preparingRef.current = false;

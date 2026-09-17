@@ -15,6 +15,15 @@ function audioContext(): AudioContext | null {
   return context;
 }
 
+/**
+ * Crea y despierta el contexto dentro de un toque. En iOS un AudioContext creado fuera de un gesto
+ * nace suspendido y `resume()` no lo levanta: el "mmm" no sonaba.
+ */
+export function primeHum(): void {
+  const ctx = audioContext();
+  if (ctx && ctx.state === 'suspended') void ctx.resume();
+}
+
 export function startHum(): void {
   if (stop) return;
   const ctx = audioContext();
