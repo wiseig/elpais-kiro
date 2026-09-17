@@ -105,6 +105,11 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
   const preparingRef = useRef(false);
   const voiceRef = useRef(false);
   const stopListenRef = useRef<(() => void) | null>(null);
+  /**
+   * Número del turno hablado en curso. Interrumpir lo avanza, así que la respuesta del turno
+   * anterior, si todavía venía en camino, llega al hilo pero ya no se lee ni corta lo nuevo.
+   */
+  const turnoRef = useRef(0);
 
   function salirDeVoz() {
     voiceModeRef.current = false;
@@ -132,8 +137,9 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
       onFinal: (texto) => {
         dijoAlgo = true;
         voiceRef.current = true;
+        turnoRef.current += 1;
         setTranscript(texto);
-        void send(texto.slice(0, MAX_QUESTION_LENGTH));
+        void send(texto.slice(0, MAX_QUESTION_LENGTH), undefined, turnoRef.current);
       },
       onEnd: () => {
         stopListenRef.current = null;
@@ -145,6 +151,25 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         salirDeVoz();
       },
     });
+  }
+
+  /**
+   * Cortar la respuesta a mitad de camino para preguntar otra cosa: se calla y vuelve a escuchar
+   * sin salir del modo. Solo mientras responde o prepara la voz, cuando la respuesta ya llegó; en
+   * pleno "pensando" la pregunta anterior sigue en vuelo y una nueva se pisaría con ella.
+   */
+  function interrumpir() {
+    if (!voiceModeRef.current) return;
+    turnoRef.current += 1;
+    stopHum();
+    stopSpeaking();
+    answerAudioRef.current?.pause();
+    answerAudioRef.current = null;
+    preparingRef.current = false;
+    setPreparing(false);
+    setSpeaking(false);
+    voiceRef.current = false;
+    escuchar();
   }
 
   function alternarVoz() {
@@ -162,9 +187,13 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
    * Usa la voz que esté elegida en Ajustes, igual que el botón "Escuchar" de cada respuesta.
    */
   function hablarRespuesta(answer: Answer) {
+    const turno = turnoRef.current;
+    const vigente = () => turno === turnoRef.current;
     const bloque = answer.blocks.find((block) => block.type === 'text');
     const contenido = bloque && 'text' in bloque ? bloque.text : '';
     const terminar = () => {
+      // Si ya se interrumpió, el turno nuevo está escuchando: no hay nada que cerrar acá.
+      if (!vigente()) return;
       setSpeaking(false);
       preparingRef.current = false;
       setPreparing(false);
@@ -200,6 +229,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
     void api
       .answerAudioUrl(answer.answerId, preferencia)
       .then(async (url) => {
+        if (!vigente()) return;
         const audio = new Audio(url);
         answerAudioRef.current = audio;
         audio.onended = terminar;
@@ -212,6 +242,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         setTranscript('');
       })
       .catch(() => {
+        if (!vigente()) return;
         // Sin audio del servidor se cae a la voz del navegador: mejor eso que quedarse mudo.
         stopHum();
         preparingRef.current = false;
@@ -321,7 +352,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
   }, [api, onMeChange]);
 
   const send = useCallback(
-    async (raw: string, retryOfId?: string) => {
+    async (raw: string, retryOfId?: string, turno?: number) => {
       const question = raw.trim();
       if (!question || loading) return;
       if (me.needsConsent) {
@@ -345,7 +376,10 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         const answer = await api.ask({ question, conversationId: conversationRef.current });
         if (answer.conversationId) conversationRef.current = answer.conversationId;
         setItems((prev) => [...prev, { kind: 'answer', id: newId(), answer }]);
-        if (voiceRef.current) hablarRespuesta(answer);
+        // Se lee solo si es la respuesta del turno hablado en curso: una interrumpida llega al
+        // hilo y se queda callada.
+        if (voiceRef.current && turno === turnoRef.current) hablarRespuesta(answer);
+        else if (turno !== undefined) stopHum();
         if (hasNotice(answer, 'consent_required')) {
           setGateOpen(true);
           refreshMe();
@@ -546,6 +580,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
           state={speaking ? 'speaking' : preparing ? 'connecting' : loading ? 'thinking' : 'listening'}
           transcript={transcript}
           onCancel={salirDeVoz}
+          onInterrupt={interrumpir}
         />
       ) : null}
 

@@ -1624,6 +1624,10 @@ textarea, input { font: inherit; }
   line-height: 1.65;
   color: var(--text);
 }
+.voice-orb-button { padding: 0; background: none; border: 0; cursor: pointer; border-radius: 50%; }
+.voice-orb-button:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 6px; }
+.voice-hint { margin: -8px 0 0; font-family: var(--font); font-size: 0.8rem; color: var(--text-secondary); text-align: center; }
+
 .voice-transcript {
   margin: 0;
   max-width: 30ch;
