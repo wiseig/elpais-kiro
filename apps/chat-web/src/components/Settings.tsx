@@ -5,6 +5,7 @@ import type { ConsentTextResponse, MeResponse } from '@pelp/domain/api';
 import { describeSaveError } from '../lib/errors';
 import { setThemePreference, useTheme, type ThemePreference } from '../lib/theme';
 import { VOICE_OPTIONS, getVoicePreference, setVoicePreference, subscribeVoice } from '../lib/voice';
+import { STT_LANG_OPTIONS, getSttLang, setSttLang, subscribeSttLang } from '../lib/stt-lang';
 import { CloseIcon } from './Icons';
 import { Modal } from './Modal';
 
@@ -63,6 +64,7 @@ export function Settings({ me, consent, onClose, onOpenGate, onChangeMode, onDel
   const locked = busy !== null;
   const canToggle = me.mode === 'personalized' || (me.mode === 'neutral' && ageConfirmed);
   const voice = useSyncExternalStore(subscribeVoice, getVoicePreference, getVoicePreference);
+  const sttLang = useSyncExternalStore(subscribeSttLang, getSttLang, getSttLang);
 
   function handleToggle() {
     if (locked || me.mode === 'undecided') return;
@@ -128,6 +130,25 @@ export function Settings({ me, consent, onClose, onOpenGate, onChangeMode, onDel
             ))}
           </div>
           <p className="settings-hint">{VOICE_OPTIONS.find((option) => option.value === voice)?.hint}</p>
+        </section>
+
+        <section className="settings-section" aria-labelledby={`${titleId}-stt`}>
+          <h3 id={`${titleId}-stt`}>Reconocimiento de voz</h3>
+          <div className="segmented" role="radiogroup" aria-label="Variante de español para dictar">
+            {STT_LANG_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={sttLang === option.value}
+                className={sttLang === option.value ? 'segmented-btn segmented-btn--active' : 'segmented-btn'}
+                onClick={() => setSttLang(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <p className="settings-hint">Qué variante de español usa el micrófono para entenderte. Probá cuál te reconoce mejor.</p>
         </section>
 
         <section className="settings-section" aria-labelledby={`${titleId}-mode`}>

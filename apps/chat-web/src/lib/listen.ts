@@ -4,6 +4,8 @@
  * botón del micrófono no aparece.
  */
 
+import { getSttLang } from './stt-lang';
+
 interface RecognitionLike {
   lang: string;
   continuous: boolean;
@@ -56,7 +58,9 @@ export function startListening(handlers: ListenHandlers): () => void {
     return () => undefined;
   }
   const recognition = new Ctor();
-  recognition.lang = 'es-UY';
+  // La variante se elige en Ajustes: cada código va a un modelo distinto y no hay forma de medir
+  // desde acá cuál entiende mejor en cada teléfono.
+  recognition.lang = getSttLang();
   recognition.continuous = false;
   recognition.interimResults = true;
 
