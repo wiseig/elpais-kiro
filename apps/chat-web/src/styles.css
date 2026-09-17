@@ -1624,6 +1624,17 @@ textarea, input { font: inherit; }
   line-height: 1.65;
   color: var(--text);
 }
+.voice-transcript {
+  margin: 0;
+  max-width: 30ch;
+  text-align: center;
+  font-family: var(--font-headline);
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 .voice-cancel {
   padding: 8px 20px;
   font: inherit;

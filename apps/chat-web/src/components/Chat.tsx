@@ -17,6 +17,7 @@ import {
   type ConversationSummary,
 } from '../lib/history';
 import { startHum, stopHum } from '../lib/hum';
+import { startListening } from '../lib/listen';
 import { speak, speechSupported, stopSpeaking } from '../lib/speech';
 import { getVoicePreference } from '../lib/voice';
 import { getToken } from '../lib/session';
@@ -86,25 +87,79 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
   const [historyOpen, setHistoryOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  /** La pregunta se dictó: la respuesta se lee en voz alta y se muestra el orbe. */
-  const [voiceTurn, setVoiceTurn] = useState(false);
+  /**
+   * Modo voz: se entra tocando el micrófono y se queda hasta cortar. La conversación sigue sola —
+   * pregunta, respuesta, vuelve a escuchar— porque cerrarlo después de cada respuesta obligaba a
+   * tocar el micrófono otra vez para cada pregunta, que en el teléfono es todo lo contrario a
+   * conversar.
+   */
+  const [voiceMode, setVoiceMode] = useState(false);
+  const voiceModeRef = useRef(false);
+  /** Lo que se va entendiendo mientras hablás, para verlo en el orbe. */
+  const [transcript, setTranscript] = useState('');
   const [speaking, setSpeaking] = useState(false);
-  /** Se está sintetizando la respuesta con la voz del servidor: el orbe sigue en "pensando". */
+  /** Se está sintetizando la respuesta con la voz del servidor: el orbe muestra "preparando". */
   const [preparing, setPreparing] = useState(false);
   const answerAudioRef = useRef<HTMLAudioElement | null>(null);
-  // `send` es asíncrono y lee el estado de cuando arrancó: la ref dice qué pasa ahora.
+  // `send` es asíncrono y lee el estado de cuando arrancó: las refs dicen qué pasa ahora.
   const preparingRef = useRef(false);
-  /** El micrófono está abierto: el orbe aparece desde acá, no recién al mandar la pregunta. */
-  const [listening, setListening] = useState(false);
-  /** Cómo cortar el dictado desde afuera del compositor (el botón del orbe). */
-  const stopListenRef = useRef<(() => void) | null>(null);
-  // El estado vive también en una ref: `send` es asíncrono y lee el valor de cuando arrancó.
   const voiceRef = useRef(false);
+  const stopListenRef = useRef<(() => void) | null>(null);
+
+  function salirDeVoz() {
+    voiceModeRef.current = false;
+    voiceRef.current = false;
+    preparingRef.current = false;
+    stopHum();
+    stopSpeaking();
+    answerAudioRef.current?.pause();
+    answerAudioRef.current = null;
+    stopListenRef.current?.();
+    stopListenRef.current = null;
+    setPreparing(false);
+    setSpeaking(false);
+    setTranscript('');
+    setVoiceMode(false);
+  }
+
+  /** Abre el micrófono para la próxima pregunta del modo voz. */
+  function escuchar() {
+    if (!voiceModeRef.current) return;
+    let dijoAlgo = false;
+    setTranscript('');
+    stopListenRef.current = startListening({
+      onPartial: (texto) => setTranscript(texto),
+      onFinal: (texto) => {
+        dijoAlgo = true;
+        voiceRef.current = true;
+        setTranscript(texto);
+        void send(texto.slice(0, MAX_QUESTION_LENGTH));
+      },
+      onEnd: () => {
+        stopListenRef.current = null;
+        // Silencio: se sale solo en vez de dejar el micrófono abierto para siempre.
+        if (!dijoAlgo && voiceModeRef.current && !voiceRef.current) salirDeVoz();
+      },
+      onError: () => {
+        stopListenRef.current = null;
+        salirDeVoz();
+      },
+    });
+  }
+
+  function alternarVoz() {
+    if (voiceModeRef.current) {
+      salirDeVoz();
+      return;
+    }
+    voiceModeRef.current = true;
+    setVoiceMode(true);
+    escuchar();
+  }
 
   /**
-   * Lee la respuesta que acaba de llegar. Se usa la voz del navegador aunque la preferencia sea
-   * una del servidor: en una conversación hablada, esperar a que se sintetice un MP3 rompe el ida
-   * y vuelta. La voz buena sigue estando en el botón "Escuchar" de cada respuesta.
+   * Lee la respuesta que acaba de llegar y vuelve a escuchar: la conversación sigue hasta cortar.
+   * Usa la voz que esté elegida en Ajustes, igual que el botón "Escuchar" de cada respuesta.
    */
   function hablarRespuesta(answer: Answer) {
     const bloque = answer.blocks.find((block) => block.type === 'text');
@@ -114,7 +169,10 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
       preparingRef.current = false;
       setPreparing(false);
       voiceRef.current = false;
-      setVoiceTurn(false);
+      answerAudioRef.current = null;
+      // Un respiro antes de volver a abrir el micrófono: sin esto el reconocimiento se come la
+      // cola de la propia respuesta y la manda como si fuera una pregunta nueva.
+      if (voiceModeRef.current) window.setTimeout(escuchar, 400);
     };
     if (!contenido.trim()) {
       stopHum();
@@ -130,6 +188,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         return;
       }
       setSpeaking(true);
+      setTranscript('');
       speak(contenido, { onEnd: terminar, onError: terminar });
       return;
     }
@@ -150,6 +209,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         preparingRef.current = false;
         setPreparing(false);
         setSpeaking(true);
+        setTranscript('');
       })
       .catch(() => {
         // Sin audio del servidor se cae a la voz del navegador: mejor eso que quedarse mudo.
@@ -165,20 +225,6 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
       });
   }
 
-  function cortarVoz() {
-    stopHum();
-    stopSpeaking();
-    answerAudioRef.current?.pause();
-    answerAudioRef.current = null;
-    stopListenRef.current?.();
-    stopListenRef.current = null;
-    setListening(false);
-    preparingRef.current = false;
-    setPreparing(false);
-    setSpeaking(false);
-    voiceRef.current = false;
-    setVoiceTurn(false);
-  }
   const idPrefix = useRef(Date.now().toString(36));
   const idCounter = useRef(0);
   const mainRef = useRef<HTMLElement>(null);
@@ -323,13 +369,12 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         setLoading(false);
         // Si la pregunta falló no hay nada que leer: se corta el "mmm" y se sale del modo voz,
         // que si no queda sonando contra un error en pantalla.
-        // El "mmm" sigue si se está preparando la voz del servidor; si no hay nada que leer, se corta.
-        if (voiceRef.current && !preparingRef.current) {
+        // El "mmm" sigue si se está preparando la voz del servidor; si la pregunta falló no hay
+        // nada que leer, así que se corta y se vuelve a escuchar.
+        if (voiceRef.current && !preparingRef.current && !window.speechSynthesis?.speaking) {
           stopHum();
-          if (!window.speechSynthesis?.speaking) {
-            voiceRef.current = false;
-            setVoiceTurn(false);
-          }
+          voiceRef.current = false;
+          if (voiceModeRef.current) window.setTimeout(escuchar, 400);
         }
       }
     },
@@ -489,26 +534,19 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
               loading={loading}
               maxLength={MAX_QUESTION_LENGTH}
               onSend={(question) => void send(question)}
-              onListeningChange={(activo, cancel) => {
-                setListening(activo);
-                stopListenRef.current = activo ? cancel ?? null : null;
-              }}
-              onVoiceSend={(question) => {
-                // La pregunta dictada entra por el mismo camino que una escrita: queda en el hilo,
-                // en Recientes y en el Historial como cualquier otra.
-                voiceRef.current = true;
-                setVoiceTurn(true);
-                void send(question);
-              }}
+              micActive={voiceMode}
+              onMicToggle={alternarVoz}
             />
           </div>
         </div>
       </div>
 
-      {listening || voiceTurn ? (
-
-        <VoiceOrb state={speaking ? 'speaking' : preparing ? 'connecting' : loading ? 'thinking' : 'listening'} onCancel={cortarVoz} />
-
+      {voiceMode ? (
+        <VoiceOrb
+          state={speaking ? 'speaking' : preparing ? 'connecting' : loading ? 'thinking' : 'listening'}
+          transcript={transcript}
+          onCancel={salirDeVoz}
+        />
       ) : null}
 
       {gateOpen ? (

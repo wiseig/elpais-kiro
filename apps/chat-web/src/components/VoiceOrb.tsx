@@ -17,7 +17,7 @@ const LABEL: Record<OrbState, string> = {
   disabled: '',
 };
 
-export function VoiceOrb({ state, onCancel }: { state: OrbState; onCancel: () => void }) {
+export function VoiceOrb({ state, transcript, onCancel }: { state: OrbState; transcript?: string; onCancel: () => void }) {
   // El micrófono solo se mide mientras escucha: el audio anima el orbe y nada más. Si no hay
   // permiso para medirlo, el orbe se anima solo; quién decide si el dictado falló es el
   // reconocimiento, no el medidor, así que acá no se muestra ningún error.
@@ -31,6 +31,9 @@ export function VoiceOrb({ state, onCancel }: { state: OrbState; onCancel: () =>
         <p className="voice-status" role="status" aria-live="polite" aria-atomic="true">
           {LABEL[visible]}
         </p>
+        {/* Lo que se va entendiendo, para verlo mientras se habla. En gris: todavía no es la
+            pregunta mandada, es lo que el reconocimiento cree escuchar. */}
+        {transcript ? <p className="voice-transcript">{transcript}</p> : null}
         <button type="button" className="voice-cancel" onClick={onCancel}>
           Cortar
         </button>

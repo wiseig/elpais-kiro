@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { MicIcon, SendIcon, Spinner } from './Icons';
-import { recognitionSupported, startListening } from '../lib/listen';
+import { recognitionSupported } from '../lib/listen';
 
 interface Props {
   /** true mientras falta decidir el consentimiento: el campo queda deshabilitado. */
@@ -9,17 +9,17 @@ interface Props {
   loading: boolean;
   maxLength: number;
   onSend: (text: string) => void;
-  /** Se llama cuando la pregunta llegó dictada: la respuesta se lee en voz alta. */
-  onVoiceSend?: (text: string) => void;
-  /** Avisa cuándo el micrófono está abierto, y cómo cortarlo desde afuera. */
-  onListeningChange?: (listening: boolean, cancel?: () => void) => void;
+  /** El modo voz está abierto: el micrófono se muestra encendido. */
+  micActive?: boolean;
+  /** Enciende o apaga el modo voz. El dictado y el ida y vuelta los maneja el chat. */
+  onMicToggle?: () => void;
 }
 
 const MAX_HEIGHT = 200;
 const WARN_UNDER = 60;
 
 /** Barra de mensaje ancoada abajo: pill auto-expansible, contador y disclaimer legal. */
-export function Composer({ disabled, loading, maxLength, onSend, onVoiceSend, onListeningChange }: Props) {
+export function Composer({ disabled, loading, maxLength, onSend, micActive = false, onMicToggle }: Props) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputId = useId();
@@ -40,45 +40,7 @@ export function Composer({ disabled, loading, maxLength, onSend, onVoiceSend, on
     return () => window.removeEventListener('resize', fit);
   }, [value]);
 
-  const [listening, setListening] = useState(false);
-  const stopListenRef = useRef<(() => void) | null>(null);
-  const puedeDictar = recognitionSupported();
-
-  // Dictar y enviar es un solo gesto: se habla, se corta al callar y la pregunta sale sola. Pedir
-  // un segundo clic en "enviar" rompe la idea de conversar.
-  function toggleMic() {
-    if (listening) {
-      stopListenRef.current?.();
-      stopListenRef.current = null;
-      setListening(false);
-      onListeningChange?.(false);
-      return;
-    }
-    setListening(true);
-    const cancel = () => {
-      stopListenRef.current?.();
-      stopListenRef.current = null;
-      setListening(false);
-    };
-    onListeningChange?.(true, cancel);
-    stopListenRef.current = startListening({
-      onPartial: (text) => setValue(text),
-      onFinal: (text) => {
-        setValue('');
-        (onVoiceSend ?? onSend)(text.slice(0, maxLength));
-      },
-      onEnd: () => {
-        stopListenRef.current = null;
-        setListening(false);
-        onListeningChange?.(false);
-      },
-      onError: () => {
-        stopListenRef.current = null;
-        setListening(false);
-        onListeningChange?.(false);
-      },
-    });
-  }
+  const puedeDictar = recognitionSupported() && Boolean(onMicToggle);
 
   const trimmed = value.trim();
   const canSend = !disabled && !loading && trimmed.length > 0 && trimmed.length <= maxLength;
@@ -130,11 +92,11 @@ export function Composer({ disabled, loading, maxLength, onSend, onVoiceSend, on
           {puedeDictar ? (
             <button
               type="button"
-              className={listening ? 'mic-btn mic-btn--on' : 'mic-btn'}
-              onClick={toggleMic}
-              disabled={disabled || loading}
-              aria-pressed={listening}
-              aria-label={listening ? 'Dejar de dictar' : 'Preguntar hablando'}
+              className={micActive ? 'mic-btn mic-btn--on' : 'mic-btn'}
+              onClick={onMicToggle}
+              disabled={disabled}
+              aria-pressed={micActive}
+              aria-label={micActive ? 'Salir del modo voz' : 'Conversar hablando'}
             >
               <MicIcon />
             </button>
