@@ -39,6 +39,8 @@ export interface InboundMessage {
 }
 
 export interface SourceItem {
+  /** Id de la nota en el corpus. Permite pedir su lectura en voz; falta en fuentes viejas. */
+  articleId?: string;
   title: string;
   url: string;
   date: string;

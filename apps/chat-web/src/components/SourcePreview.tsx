@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { SourceItem } from '@pelp/domain';
 import { formatDate, sectionLabel, toIsoDate } from '../lib/format';
+import { speak, speechSupported, stopSpeaking, type SpeechState } from '../lib/speech';
 import { useSourcePreview } from '../lib/preview';
 import type { ApiClient } from '../lib/api';
 import { ExternalIcon } from './Icons';
@@ -97,6 +98,46 @@ export function SourcePreviewCard({ item, api, onOpen }: CardProps) {
           {deck ? <span className="source-card-deck">{deck}</span> : null}
         </span>
       </a>
+      <ListenButton item={item} api={api} />
     </li>
+  );
+}
+
+/**
+ * "Escuchar": lo dice la voz del navegador, así que no cuesta nada ni manda el texto a ningún
+ * lado. Solo aparece si el navegador sabe hablar y si la fuente trae de qué nota viene: las
+ * respuestas guardadas antes de esto no lo traen.
+ */
+function ListenButton({ item, api }: { item: SourceItem; api: ApiClient }) {
+  const [state, setState] = useState<SpeechState>('idle');
+  const puede = speechSupported();
+  if (!item.articleId || !puede) return null;
+
+  const detener = () => {
+    stopSpeaking();
+    setState('idle');
+  };
+
+  const escuchar = async () => {
+    setState('loading');
+    try {
+      const script = await api.articleScript(item.articleId as string);
+      setState('speaking');
+      speak(script, { onEnd: () => setState('idle'), onError: () => setState('error') });
+    } catch {
+      setState('error');
+    }
+  };
+
+  const hablando = state === 'speaking' || state === 'loading';
+  return (
+    <button
+      type="button"
+      className={hablando ? 'source-listen source-listen--active' : 'source-listen'}
+      onClick={() => (hablando ? detener() : void escuchar())}
+      aria-label={hablando ? `Dejar de escuchar ${item.title}` : `Escuchar ${item.title}`}
+    >
+      {state === 'loading' ? 'Preparando…' : state === 'speaking' ? 'Detener' : state === 'error' ? 'No se pudo leer' : 'Escuchar'}
+    </button>
   );
 }

@@ -174,4 +174,17 @@ export class ApiClient {
       throw err;
     }
   }
+  /**
+   * Texto de una nota para leerlo en voz. Se pide el guion y no el audio: lo dice el navegador,
+   * que es gratis. El audio sintetizado existe en el mismo endpoint con `mode=audio`.
+   */
+  async articleScript(articleId: string): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/v1/notes/${encodeURIComponent(articleId)}/audio?mode=script`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error(`No se pudo obtener el texto de la nota (${res.status}).`);
+    const body = (await res.json()) as { script?: unknown };
+    if (typeof body.script !== 'string' || !body.script.trim()) throw new Error('La nota no tiene texto para leer.');
+    return body.script;
+  }
 }

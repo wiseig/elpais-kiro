@@ -4,7 +4,7 @@ import { CONSENT_TEXT_VERSIONS, TENANT_ID, isChannelAction, ulid } from '@pelp/d
 import { ConfigProvider } from './core/config';
 import { DynamoDb } from './core/db';
 import { askQuestion, type EngineDeps } from './core/engine';
-import { EventBridgePublisher, S3CorpusBody, awsGuardrails, awsModels, awsRetriever } from './core/gateways';
+import { EventBridgePublisher, PollySpeech, S3CorpusBody, awsGuardrails, awsModels, awsRetriever } from './core/gateways';
 import { logger } from './core/log';
 import { deleteReader, needsConsent, readerMode, recordDecision, resolveReader } from './core/readers';
 import { identitySecret } from './core/secrets';
@@ -17,6 +17,8 @@ async function buildDeps(): Promise<WebDeps> {
   const tableName = process.env.TABLE_NAME;
   if (!tableName) throw new Error('Falta TABLE_NAME');
   const store = new Store(new DynamoDb(tableName));
+  // El mismo cliente sirve para leer notas y para guardar y firmar el audio.
+  const corpus = new S3CorpusBody(process.env.CORPUS_BUCKET);
   const secret = await identitySecret();
   return {
     store,
@@ -25,7 +27,9 @@ async function buildDeps(): Promise<WebDeps> {
     retriever: awsRetriever,
     guard: awsGuardrails,
     events: new EventBridgePublisher(process.env.EVENT_BUS_NAME),
-    corpusBody: new S3CorpusBody(process.env.CORPUS_BUCKET),
+    corpusBody: corpus,
+    audioStore: corpus,
+    speech: new PollySpeech(),
     log: logger,
     now: () => new Date(),
     secret,

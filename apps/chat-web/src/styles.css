@@ -1568,3 +1568,18 @@ textarea, input { font: inherit; }
   :root { --content-w: 820px; }
   .home { padding-top: 72px; }
 }
+
+/* Botón de escuchar de cada fuente: discreto, debajo de la tarjeta. */
+.source-listen {
+  margin-top: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--text-muted, #666);
+  background: transparent;
+  border: 1px solid var(--border, #d8d8d8);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.source-listen:hover { color: var(--text, #111); border-color: var(--text-muted, #999); }
+.source-listen--active { color: var(--text, #111); border-color: currentColor; }

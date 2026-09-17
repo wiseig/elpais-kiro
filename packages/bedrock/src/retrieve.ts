@@ -151,6 +151,7 @@ export function sourcesFromChunks(chunks: RetrievedChunk[], usedIndexes: number[
     if (!chunk || seen.has(chunk.articleId)) continue;
     seen.add(chunk.articleId);
     sources.push({
+      articleId: chunk.articleId,
       title: chunk.title,
       url: chunk.url,
       date: chunk.date,

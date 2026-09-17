@@ -5,6 +5,7 @@ export * from './log';
 export * from './secrets';
 export * from './gateways';
 export * from './readers';
+export * from './audio';
 export * from './canonical';
 export * from './personalization';
 export * from './budget';

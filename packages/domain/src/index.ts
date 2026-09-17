@@ -2,6 +2,7 @@ export * from './types';
 export * from './config';
 export * from './keys';
 export * from './frames';
+export * from './audio';
 export * from './normalize';
 export * from './sections';
 export * from './stance';

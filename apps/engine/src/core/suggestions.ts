@@ -42,6 +42,7 @@ function freshFrom(config: Config, now: Date): string {
 
 function sourceFromCorpus(record: CorpusIndexRecord): SourceItem {
   return {
+    articleId: record.articleId,
     title: record.title,
     url: record.url,
     date: record.date,

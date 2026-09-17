@@ -68,9 +68,14 @@ export class EngineStack extends Stack {
     data.table.grantReadWriteData(engine);
     // El panorama arma su respuesta con el cuerpo de las notas, no con los titulares.
     data.corpusBucket.grantRead(engine);
+    // El audio de cada nota se guarda una sola vez bajo `audio/`, fuera del prefijo que indexa la
+    // Knowledge Base (`notas/`), así que no ensucia la búsqueda.
+    data.corpusBucket.grantPut(engine, 'audio/*');
     data.identitySecret.grantRead(engine);
     data.eventBus.grantPutEventsTo(engine);
     engine.addToRolePolicy(bedrockModelPolicy(this));
+    // Lectura en voz de las notas. Polly no expone recursos por ARN para sintetizar.
+    engine.addToRolePolicy(new iam.PolicyStatement({ actions: ['polly:SynthesizeSpeech'], resources: ['*'] }));
     engine.addToRolePolicy(new iam.PolicyStatement({ actions: ['bedrock:Retrieve'], resources: [data.knowledgeBaseArn] }));
     engine.addToRolePolicy(new iam.PolicyStatement({ actions: ['bedrock:ApplyGuardrail'], resources: [data.guardrail.attrGuardrailArn] }));
     engine.addEventSource(new SqsEventSource(data.inboundQueue, { batchSize: 1, reportBatchItemFailures: true, maxConcurrency: 5 }));

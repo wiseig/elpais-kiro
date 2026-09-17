@@ -1,5 +1,8 @@
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { PollyClient, SynthesizeSpeechCommand } from '@aws-sdk/client-polly';
+import { splitForSpeech } from '@pelp/domain';
 import {
   checkGrounding,
   checkInput,
@@ -77,7 +80,7 @@ export interface CorpusBodyGateway {
   read(s3Key: string): Promise<string | undefined>;
 }
 
-export class S3CorpusBody implements CorpusBodyGateway {
+export class S3CorpusBody implements CorpusBodyGateway, AudioStoreGateway {
   private readonly client = new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' });
   constructor(private readonly bucket: string | undefined) {}
 
@@ -90,5 +93,68 @@ export class S3CorpusBody implements CorpusBodyGateway {
       // Una nota que no se puede leer no puede tumbar el panorama: se cae al titular.
       return undefined;
     }
+  }
+
+  async exists(key: string): Promise<boolean> {
+    if (!this.bucket) return false;
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async put(key: string, body: Uint8Array, contentType: string): Promise<void> {
+    if (!this.bucket) throw new Error('Falta CORPUS_BUCKET');
+    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: contentType }));
+  }
+
+  async signedUrl(key: string, ttlSeconds: number): Promise<string> {
+    if (!this.bucket) throw new Error('Falta CORPUS_BUCKET');
+    return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn: ttlSeconds });
+  }
+}
+
+/**
+ * Guardado del audio ya sintetizado. Va al mismo bucket del corpus bajo `audio/`, fuera del
+ * prefijo que indexa la Knowledge Base, así que no ensucia la búsqueda.
+ */
+export interface AudioStoreGateway {
+  exists(key: string): Promise<boolean>;
+  put(key: string, body: Uint8Array, contentType: string): Promise<void>;
+  signedUrl(key: string, ttlSeconds: number): Promise<string>;
+}
+
+/** Síntesis de voz. La implementación real es Amazon Polly. */
+export interface SpeechGateway {
+  synthesize(input: { text: string; voice: string; engine: string }): Promise<Uint8Array>;
+}
+
+export class PollySpeech implements SpeechGateway {
+  private readonly client = new PollyClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
+
+  /**
+   * Polly acepta 3.000 caracteres por llamada, así que una nota entera se sintetiza por partes y
+   * se pegan los MP3. El corte va por párrafo o por oración (ver `splitForSpeech`): partir por
+   * cantidad de caracteres mete cortes en mitad de una palabra al unir los pedazos.
+   */
+  async synthesize({ text, voice, engine }: { text: string; voice: string; engine: string }): Promise<Uint8Array> {
+    const parts: Uint8Array[] = [];
+    for (const chunk of splitForSpeech(text)) {
+      const output = await this.client.send(
+        new SynthesizeSpeechCommand({ Text: chunk, OutputFormat: 'mp3', VoiceId: voice as never, Engine: engine as never }),
+      );
+      const bytes = await output.AudioStream?.transformToByteArray();
+      if (bytes?.length) parts.push(bytes);
+    }
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const audio = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      audio.set(part, offset);
+      offset += part.length;
+    }
+    return audio;
   }
 }

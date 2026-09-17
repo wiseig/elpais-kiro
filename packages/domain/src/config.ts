@@ -254,6 +254,43 @@ export const ConfigSchema = z.object({
         .default({}),
     })
     .default({}),
+  /**
+   * Lectura en voz de las notas. El plan base la resuelve el cliente con la voz del navegador
+   * —gratis— y el endpoint le ofrece la voz estándar para quien no pueda sintetizar; el plan pro
+   * usa una voz neural. Lo del servidor se guarda una vez por nota y no se vuelve a generar.
+   */
+  audio: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** Tope de texto leído por nota. Una nota de El País ronda los 3.000. */
+      maxChars: z.number().int().min(500).max(20000).default(9000),
+      /** Plan que se usa cuando quien llama no declara ninguno. */
+      defaultPlan: z.enum(['base', 'pro']).default('base'),
+      /** Minutos que vive el enlace firmado del audio. El archivo en sí no caduca. */
+      urlTtlMinutes: z.number().int().min(1).max(1440).default(60),
+      plans: z
+        .object({
+          base: z
+            .object({
+              /** Voz de Polly para quien pida el audio ya sintetizado. */
+              voice: z.string().min(1).default('Lupe'),
+              engine: z.enum(['standard', 'neural', 'generative', 'long-form']).default('standard'),
+              /** Si el cliente puede resolverlo con la voz del navegador (sin costo). */
+              browserVoice: z.boolean().default(true),
+            })
+            .default({}),
+          pro: z
+            .object({
+              voice: z.string().min(1).default('Lupe'),
+              engine: z.enum(['standard', 'neural', 'generative', 'long-form']).default('neural'),
+              browserVoice: z.boolean().default(false),
+            })
+            .default({}),
+        })
+        .default({}),
+    })
+    .default({}),
+
   suggestions: z
     .object({
       days: z.number().int().min(1).max(30).default(7),
@@ -399,6 +436,14 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       rewrite: 'v3',
       offTopic: 'v2',
       biasJudge: 'v1',
+    },
+    audio: {
+      enabled: true,
+      maxChars: 9000,
+      defaultPlan: 'base',
+      urlTtlMinutes: 60,
+      // Lupe es es-US, la más neutra para un oído rioplatense: las es-ES suenan peninsulares.
+      plans: { base: { voice: 'Lupe', engine: 'standard', browserVoice: true }, pro: { voice: 'Lupe', engine: 'neural', browserVoice: false } },
     },
     suggestions: { days: 7, max: 6, freshDays: 3, fallback: DEFAULT_SUGGESTIONS, cardTemplates: [...DEFAULT_CARD_TEMPLATES] },
   } satisfies ConfigInput);

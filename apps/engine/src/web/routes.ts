@@ -1,7 +1,8 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import type { AnswerBlock, ReaderRecord } from '@pelp/domain';
-import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, isAllowedUrl, isUlid, ulid } from '@pelp/domain';
+import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, isAllowedUrl, isAudioMode, isAudioPlan, isUlid, ulid } from '@pelp/domain';
 import type {
+  ArticleAudioResponse,
   ClientEventRequest,
   ConsentRequest,
   ConsentTextResponse,
@@ -10,6 +11,8 @@ import type {
   PatchMeRequest,
   SessionResponse,
 } from '@pelp/domain/api';
+import { AudioError, articleAudio } from '../core/audio';
+import type { AudioStoreGateway, SpeechGateway } from '../core/gateways';
 import type { EngineDeps } from '../core/engine';
 import { askQuestion } from '../core/engine';
 import { ConsentError, deleteReader, meResponse, readerMode, recordDecision, resolveReader } from '../core/readers';
@@ -21,6 +24,9 @@ import { issueSession } from './session';
 export interface WebDeps extends EngineDeps {
   secret: string;
   allowedOrigin?: string;
+  /** Guardado y firma del audio ya sintetizado. */
+  audioStore?: AudioStoreGateway | undefined;
+  speech?: SpeechGateway | undefined;
 }
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -117,6 +123,35 @@ export async function handleHttp(deps: WebDeps, event: APIGatewayProxyEvent): Pr
     if (method === 'GET' && path === '/v1/suggestions') {
       const config = await deps.config.get();
       return json(200, await suggestionsResponse(deps.store, config, now), origin);
+    }
+
+    /**
+     * Lectura en voz de una nota. Pública a propósito: el destino es un botón de "escuchar" en el
+     * portal, que no es un cliente del chat y no tiene sesión. El límite de abuso lo pone el WAF.
+     */
+    const audioMatch = /^\/v1\/notes\/([A-Za-z0-9_-]{8,80})\/audio$/.exec(path);
+    if (method === 'GET' && audioMatch) {
+      const config = await deps.config.get();
+      const query = event.queryStringParameters ?? {};
+      const plan = isAudioPlan(query.plan) ? query.plan : config.audio.defaultPlan;
+      const mode = isAudioMode(query.mode) ? query.mode : 'audio';
+      try {
+        const result = await articleAudio(
+          { store: deps.store, corpusBody: deps.corpusBody, audioStore: deps.audioStore, speech: deps.speech, log: deps.log },
+          config,
+          { articleId: audioMatch[1] ?? '', plan, mode },
+        );
+        const body: ArticleAudioResponse = result;
+        // El guion no cambia mientras no cambie la nota; el enlace firmado caduca antes que el caché.
+        const maxAge = mode === 'script' ? 3600 : Math.max(60, config.audio.urlTtlMinutes * 60 - 300);
+        return {
+          ...json(200, body, origin),
+          headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${maxAge}`, ...corsHeaders(origin) },
+        };
+      } catch (error) {
+        if (error instanceof AudioError) throw new HttpError(error.status, error.message, error.code);
+        throw error;
+      }
     }
 
     if (method === 'POST' && path === '/v1/ask') {

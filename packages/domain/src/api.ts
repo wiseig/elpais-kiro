@@ -95,6 +95,29 @@ export interface SuggestionsResponse {
   cards: SuggestionCard[];
 }
 
+/**
+ * Lectura en voz de una nota. Con `mode=script` viene el texto y lo dice el navegador (sin costo);
+ * con `mode=audio` viene el enlace al MP3 ya sintetizado y guardado.
+ */
+export interface ArticleAudioResponse {
+  articleId: string;
+  title: string;
+  url: string;
+  date: string;
+  section: string;
+  plan: 'base' | 'pro';
+  /** Caracteres que se leen. */
+  chars: number;
+  /** La nota no entraba entera en el tope configurado. */
+  truncated: boolean;
+  script?: string;
+  audioUrl?: string;
+  voice?: string;
+  engine?: string;
+  /** El MP3 ya existía: no se volvió a generar. */
+  cached?: boolean;
+}
+
 /** Metadatos Open Graph de una nota de El País (solo hosts permitidos), con caché. */
 export interface PreviewResponse {
   url: string;
