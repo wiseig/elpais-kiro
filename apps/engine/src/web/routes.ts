@@ -12,6 +12,7 @@ import type {
   SessionResponse,
 } from '@pelp/domain/api';
 import { AudioError, answerAudio, articleAudio } from '../core/audio';
+import { presignTranscribeUrl } from '../core/transcribe';
 import type { AudioStoreGateway, SpeechGateway } from '../core/gateways';
 import type { EngineDeps } from '../core/engine';
 import { askQuestion } from '../core/engine';
@@ -171,6 +172,15 @@ export async function handleHttp(deps: WebDeps, event: APIGatewayProxyEvent): Pr
 
     const { reader, hash } = await requireReader(deps, adapter, event, now);
     const config = await deps.config.get();
+
+    /**
+     * Conexión al reconocimiento de voz del servidor. Con sesión: la URL firmada consume minutos
+     * de Transcribe a nuestra cuenta, así que no se reparte a cualquiera.
+     */
+    if (method === 'GET' && path === '/v1/voice/transcribe-url') {
+      if (!config.audio.enabled) throw new HttpError(503, 'El reconocimiento de voz está apagado.', 'audio_disabled');
+      return json(200, await presignTranscribeUrl(config), origin);
+    }
 
     if (method === 'POST' && path === '/v1/consent') {
       const body = parseBody(event) as Partial<ConsentRequest>;

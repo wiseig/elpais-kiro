@@ -188,6 +188,11 @@ export class ApiClient {
     return body.script;
   }
 
+  /** URL firmada para dictar contra el reconocimiento del servidor (Transcribe). Dura 5 minutos. */
+  transcribeUrl(): Promise<{ url: string; languageCode: string; sampleRate: number; expiresInSeconds: number }> {
+    return this.request('GET', '/v1/voice/transcribe-url');
+  }
+
   /** Enlace al MP3 de una respuesta generada. Se sintetiza una vez y se reutiliza. */
   async answerAudioUrl(answerId: string, plan: 'base' | 'pro'): Promise<string> {
     const body = await this.request<{ audioUrl?: string }>('GET', `/v1/answers/${encodeURIComponent(answerId)}/audio?plan=${plan}`);

@@ -268,6 +268,20 @@ export const ConfigSchema = z.object({
       defaultPlan: z.enum(['base', 'pro']).default('base'),
       /** Minutos que vive el enlace firmado del audio. El archivo en sí no caduca. */
       urlTtlMinutes: z.number().int().min(1).max(1440).default(60),
+      /**
+       * Reconocimiento de voz en el servidor (Amazon Transcribe en streaming). El navegador se
+       * conecta directo con una URL firmada por el motor; el audio no pasa por la Lambda. El
+       * vocabulario es una lista de nombres locales (Orsi, Cosse, Peñarol, Tacuarembó…) que el
+       * modelo genérico destroza.
+       */
+      transcribe: z
+        .object({
+          languageCode: z.string().min(2).default('es-US'),
+          sampleRate: z.number().int().min(8000).max(48000).default(16000),
+          /** Nombre del vocabulario propio en Transcribe; vacío para no usar ninguno. */
+          vocabularyName: z.string().default('pelp-uy-dev'),
+        })
+        .default({}),
       plans: z
         .object({
           base: z
@@ -442,6 +456,7 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       maxChars: 9000,
       defaultPlan: 'base',
       urlTtlMinutes: 60,
+      transcribe: { languageCode: 'es-US', sampleRate: 16000, vocabularyName: 'pelp-uy-dev' },
       // Pro va en es-MX (Mia) y base en es-US (Lupe): las es-ES suenan peninsulares y chocan acá.
       // De las dos voces mexicanas, "Andrés" no es un id que la API acepte, así que queda Mia.
       // Pro va en `generative`, que es bastante más natural que `neural`: escuchadas las dos el

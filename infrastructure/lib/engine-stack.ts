@@ -76,6 +76,9 @@ export class EngineStack extends Stack {
     engine.addToRolePolicy(bedrockModelPolicy(this));
     // Lectura en voz de las notas. Polly no expone recursos por ARN para sintetizar.
     engine.addToRolePolicy(new iam.PolicyStatement({ actions: ['polly:SynthesizeSpeech'], resources: ['*'] }));
+    // Reconocimiento de voz: el motor firma la conexión al streaming de Transcribe y el navegador
+    // manda el audio directo. Sin ARN por recurso.
+    engine.addToRolePolicy(new iam.PolicyStatement({ actions: ['transcribe:StartStreamTranscriptionWebSocket', 'transcribe:StartStreamTranscription'], resources: ['*'] }));
     engine.addToRolePolicy(new iam.PolicyStatement({ actions: ['bedrock:Retrieve'], resources: [data.knowledgeBaseArn] }));
     engine.addToRolePolicy(new iam.PolicyStatement({ actions: ['bedrock:ApplyGuardrail'], resources: [data.guardrail.attrGuardrailArn] }));
     engine.addEventSource(new SqsEventSource(data.inboundQueue, { batchSize: 1, reportBatchItemFailures: true, maxConcurrency: 5 }));

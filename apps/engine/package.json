@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Motor de respuestas (Lambda pelp-engine): guardrails, recuperaci\u00f3n, can\u00f3nica, adaptaci\u00f3n, verificaci\u00f3n y rutas p\u00fablicas /v1.",
+  "description": "Motor de respuestas (Lambda pelp-engine): guardrails, recuperación, canónica, adaptación, verificación y rutas públicas /v1.",
   "exports": {
     ".": "./src/index.ts",
     "./core": "./src/core/index.ts"
@@ -25,7 +25,8 @@
     "@pelp/channel-sdk": "workspace:*",
     "@pelp/domain": "workspace:*",
     "@pelp/prompts": "workspace:*",
-    "@pelp/testing": "workspace:*"
+    "@pelp/testing": "workspace:*",
+    "@smithy/signature-v4": "5.7.3"
   },
   "devDependencies": {
     "@types/aws-lambda": "8.10.163",

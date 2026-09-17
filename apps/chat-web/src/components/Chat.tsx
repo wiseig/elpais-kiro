@@ -18,6 +18,8 @@ import {
 } from '../lib/history';
 import { startHum, stopHum } from '../lib/hum';
 import { startListening } from '../lib/listen';
+import { getSttProvider } from '../lib/stt-provider';
+import { startTranscribe } from '../lib/transcribe';
 import { speak, speechSupported, stopSpeaking } from '../lib/speech';
 import { getVoicePreference } from '../lib/voice';
 import { getToken } from '../lib/session';
@@ -132,7 +134,9 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
     if (!voiceModeRef.current) return;
     let dijoAlgo = false;
     setTranscript('');
-    stopListenRef.current = startListening({
+    // Mismo contrato para los dos motores: el chat no sabe cuál está escuchando.
+    const abrir = getSttProvider() === 'transcribe' ? (h: Parameters<typeof startListening>[0]) => startTranscribe(api, h) : startListening;
+    stopListenRef.current = abrir({
       onPartial: (texto) => setTranscript(texto),
       onFinal: (texto) => {
         dijoAlgo = true;
