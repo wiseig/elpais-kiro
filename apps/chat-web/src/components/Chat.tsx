@@ -89,6 +89,15 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
   /** La pregunta se dictó: la respuesta se lee en voz alta y se muestra el orbe. */
   const [voiceTurn, setVoiceTurn] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  /** Se está sintetizando la respuesta con la voz del servidor: el orbe sigue en "pensando". */
+  const [preparing, setPreparing] = useState(false);
+  const answerAudioRef = useRef<HTMLAudioElement | null>(null);
+  // `send` es asíncrono y lee el estado de cuando arrancó: la ref dice qué pasa ahora.
+  const preparingRef = useRef(false);
+  /** El micrófono está abierto: el orbe aparece desde acá, no recién al mandar la pregunta. */
+  const [listening, setListening] = useState(false);
+  /** Cómo cortar el dictado desde afuera del compositor (el botón del orbe). */
+  const stopListenRef = useRef<(() => void) | null>(null);
   // El estado vive también en una ref: `send` es asíncrono y lee el valor de cuando arrancó.
   const voiceRef = useRef(false);
 
@@ -98,25 +107,74 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
    * y vuelta. La voz buena sigue estando en el botón "Escuchar" de cada respuesta.
    */
   function hablarRespuesta(answer: Answer) {
-    const texto = answer.blocks.find((block) => block.type === 'text');
-    const contenido = texto && 'text' in texto ? texto.text : '';
-    if (!contenido.trim() || !speechSupported()) {
-      voiceRef.current = false;
-      setVoiceTurn(false);
-      return;
-    }
-    setSpeaking(true);
+    const bloque = answer.blocks.find((block) => block.type === 'text');
+    const contenido = bloque && 'text' in bloque ? bloque.text : '';
     const terminar = () => {
       setSpeaking(false);
+      preparingRef.current = false;
+      setPreparing(false);
       voiceRef.current = false;
       setVoiceTurn(false);
     };
-    speak(contenido, { onEnd: terminar, onError: terminar });
+    if (!contenido.trim()) {
+      stopHum();
+      terminar();
+      return;
+    }
+
+    const preferencia = getVoicePreference();
+    if (preferencia === 'navegador') {
+      stopHum();
+      if (!speechSupported()) {
+        terminar();
+        return;
+      }
+      setSpeaking(true);
+      speak(contenido, { onEnd: terminar, onError: terminar });
+      return;
+    }
+
+    // Con la voz del servidor hay que esperar a que se sintetice. El "mmm" sigue sonando hasta
+    // que el audio arranca: cortarlo antes deja un silencio raro en mitad de la conversación.
+    preparingRef.current = true;
+    setPreparing(true);
+    void api
+      .answerAudioUrl(answer.answerId, preferencia)
+      .then(async (url) => {
+        const audio = new Audio(url);
+        answerAudioRef.current = audio;
+        audio.onended = terminar;
+        audio.onerror = terminar;
+        await audio.play();
+        stopHum();
+        preparingRef.current = false;
+        setPreparing(false);
+        setSpeaking(true);
+      })
+      .catch(() => {
+        // Sin audio del servidor se cae a la voz del navegador: mejor eso que quedarse mudo.
+        stopHum();
+        preparingRef.current = false;
+        setPreparing(false);
+        if (!speechSupported()) {
+          terminar();
+          return;
+        }
+        setSpeaking(true);
+        speak(contenido, { onEnd: terminar, onError: terminar });
+      });
   }
 
   function cortarVoz() {
     stopHum();
     stopSpeaking();
+    answerAudioRef.current?.pause();
+    answerAudioRef.current = null;
+    stopListenRef.current?.();
+    stopListenRef.current = null;
+    setListening(false);
+    preparingRef.current = false;
+    setPreparing(false);
     setSpeaking(false);
     voiceRef.current = false;
     setVoiceTurn(false);
@@ -241,10 +299,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         const answer = await api.ask({ question, conversationId: conversationRef.current });
         if (answer.conversationId) conversationRef.current = answer.conversationId;
         setItems((prev) => [...prev, { kind: 'answer', id: newId(), answer }]);
-        if (voiceRef.current) {
-          stopHum();
-          hablarRespuesta(answer);
-        }
+        if (voiceRef.current) hablarRespuesta(answer);
         if (hasNotice(answer, 'consent_required')) {
           setGateOpen(true);
           refreshMe();
@@ -268,10 +323,13 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         setLoading(false);
         // Si la pregunta falló no hay nada que leer: se corta el "mmm" y se sale del modo voz,
         // que si no queda sonando contra un error en pantalla.
-        stopHum();
-        if (voiceRef.current && !window.speechSynthesis?.speaking) {
-          voiceRef.current = false;
-          setVoiceTurn(false);
+        // El "mmm" sigue si se está preparando la voz del servidor; si no hay nada que leer, se corta.
+        if (voiceRef.current && !preparingRef.current) {
+          stopHum();
+          if (!window.speechSynthesis?.speaking) {
+            voiceRef.current = false;
+            setVoiceTurn(false);
+          }
         }
       }
     },
@@ -426,16 +484,15 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
                 </button>
               </div>
             ) : null}
-            {voiceTurn ? (
-              <button type="button" className="orb-stop" onClick={cortarVoz} aria-label="Cortar la conversación por voz">
-                <VoiceOrb state={speaking ? 'speaking' : loading ? 'thinking' : 'listening'} />
-              </button>
-            ) : null}
             <Composer
               disabled={me.needsConsent}
               loading={loading}
               maxLength={MAX_QUESTION_LENGTH}
               onSend={(question) => void send(question)}
+              onListeningChange={(activo, cancel) => {
+                setListening(activo);
+                stopListenRef.current = activo ? cancel ?? null : null;
+              }}
               onVoiceSend={(question) => {
                 // La pregunta dictada entra por el mismo camino que una escrita: queda en el hilo,
                 // en Recientes y en el Historial como cualquier otra.
@@ -447,6 +504,12 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
           </div>
         </div>
       </div>
+
+      {listening || voiceTurn ? (
+
+        <VoiceOrb state={speaking ? 'speaking' : loading || preparing ? 'thinking' : 'listening'} onCancel={cortarVoz} />
+
+      ) : null}
 
       {gateOpen ? (
         <ConsentGate

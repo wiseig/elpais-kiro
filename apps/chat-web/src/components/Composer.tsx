@@ -11,13 +11,15 @@ interface Props {
   onSend: (text: string) => void;
   /** Se llama cuando la pregunta llegó dictada: la respuesta se lee en voz alta. */
   onVoiceSend?: (text: string) => void;
+  /** Avisa cuándo el micrófono está abierto, y cómo cortarlo desde afuera. */
+  onListeningChange?: (listening: boolean, cancel?: () => void) => void;
 }
 
 const MAX_HEIGHT = 200;
 const WARN_UNDER = 60;
 
 /** Barra de mensaje ancoada abajo: pill auto-expansible, contador y disclaimer legal. */
-export function Composer({ disabled, loading, maxLength, onSend, onVoiceSend }: Props) {
+export function Composer({ disabled, loading, maxLength, onSend, onVoiceSend, onListeningChange }: Props) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputId = useId();
@@ -49,9 +51,16 @@ export function Composer({ disabled, loading, maxLength, onSend, onVoiceSend }: 
       stopListenRef.current?.();
       stopListenRef.current = null;
       setListening(false);
+      onListeningChange?.(false);
       return;
     }
     setListening(true);
+    const cancel = () => {
+      stopListenRef.current?.();
+      stopListenRef.current = null;
+      setListening(false);
+    };
+    onListeningChange?.(true, cancel);
     stopListenRef.current = startListening({
       onPartial: (text) => setValue(text),
       onFinal: (text) => {
@@ -61,10 +70,12 @@ export function Composer({ disabled, loading, maxLength, onSend, onVoiceSend }: 
       onEnd: () => {
         stopListenRef.current = null;
         setListening(false);
+        onListeningChange?.(false);
       },
       onError: () => {
         stopListenRef.current = null;
         setListening(false);
+        onListeningChange?.(false);
       },
     });
   }
