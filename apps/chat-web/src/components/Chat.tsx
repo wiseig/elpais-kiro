@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import type { Answer, NoticeCode } from '@pelp/domain';
 import type { ConsentTextResponse, MeResponse, SuggestionCard } from '@pelp/domain/api';
 import type { ApiClient } from '../lib/api';
@@ -49,11 +50,13 @@ interface InitialState {
   conversationId: string | undefined;
 }
 
-/** Retoma la conversación más reciente guardada para este token, o arranca una en blanco. */
-function loadInitialState(token: string | null): InitialState {
-  const [mostRecent] = listConversations(token);
-  if (mostRecent) {
-    const record = getConversation(token, mostRecent.id);
+/**
+ * Abre la conversación que pide la URL, o arranca una en blanco. Antes retomaba sola la última
+ * guardada, así que recargar te devolvía al medio de una conversación en vez de al inicio.
+ */
+function loadInitialState(token: string | null, routeId: string | undefined): InitialState {
+  if (routeId) {
+    const record = getConversation(token, routeId);
     if (record) return { activeId: record.id, items: record.items, conversationId: record.conversationId };
   }
   return { activeId: newConversationId(), items: [], conversationId: undefined };
@@ -61,11 +64,15 @@ function loadInitialState(token: string | null): InitialState {
 
 export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeChange, onDeleted }: Props) {
   const token = getToken();
-  const [initial] = useState(() => loadInitialState(token));
+  const navigate = useNavigate();
+  const { conversationId: routeId } = useParams();
+  const [initial] = useState(() => loadInitialState(token, routeId));
   const [activeId, setActiveId] = useState(initial.activeId);
   const [items, setItems] = useState<ChatItem[]>(initial.items);
   const conversationRef = useRef<string | undefined>(initial.conversationId);
   const [conversations, setConversations] = useState<ConversationSummary[]>(() => listConversations(token));
+  /** La última ruta ya aplicada: sin esto el efecto volvería a abrir lo que ya está abierto. */
+  const lastRouteRef = useRef<string | undefined>(routeId);
   const [loading, setLoading] = useState(false);
   const [gateOpen, setGateOpen] = useState(me.needsConsent);
   const [consentBusy, setConsentBusy] = useState(false);
@@ -218,7 +225,8 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
     [api, loading, me.needsConsent, refreshMe],
   );
 
-  function resetConversation() {
+  /** El cambio de pantalla, sin tocar la URL: lo usan la navegación y el botón del riel. */
+  function showBlank() {
     skipNextAutoScrollRef.current = true;
     pinnedRef.current = true;
     setShowJumpToBottom(false);
@@ -228,8 +236,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
     scrollToTop(scrollRef.current, prefersReducedMotion() ? 'auto' : 'smooth');
   }
 
-  function selectConversation(id: string) {
-    if (id === activeId) return;
+  function showConversation(id: string) {
     skipNextAutoScrollRef.current = true;
     pinnedRef.current = true;
     setShowJumpToBottom(false);
@@ -239,6 +246,31 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
     setActiveId(id);
     scrollToTop(scrollRef.current, prefersReducedMotion() ? 'auto' : 'smooth');
   }
+
+  function resetConversation() {
+    lastRouteRef.current = undefined;
+    showBlank();
+    navigate('/');
+  }
+
+  // Abrir una conversación cambia la URL: así cada una tiene su enlace y los botones de ir y
+  // volver del navegador funcionan. El cambio de pantalla lo hace el efecto de abajo, que es el
+  // mismo camino que recorre una vuelta atrás.
+  function selectConversation(id: string) {
+    if (id === activeId) return;
+    navigate(`/c/${encodeURIComponent(id)}`);
+  }
+
+  // La URL manda: abrir desde el riel, volver con el botón del navegador o entrar a un enlace
+  // pasan todos por acá, así que el estado no puede quedar desfasado de la barra de direcciones.
+  useEffect(() => {
+    if (routeId === lastRouteRef.current) return;
+    lastRouteRef.current = routeId;
+    if (routeId) showConversation(routeId);
+    else showBlank();
+    // showConversation y showBlank leen refs y estado propio; no hacen falta como dependencias.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeId]);
 
   function removeFromHistory(id: string) {
     removeConversation(getToken(), id);

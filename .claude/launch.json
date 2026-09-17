@@ -3,10 +3,10 @@
   "configurations": [
     {
       "name": "chat-web",
-      "runtimeExecutable": "sh",
+      "runtimeExecutable": "python3",
       "runtimeArgs": [
         "-c",
-        "cd /Users/facundomendez/Documents/elpais-kiro && export PATH=$HOME/.nvm/versions/node/v22.22.0/bin:$PATH && VITE_API_PROXY=https://m2gkn34u2c.execute-api.us-east-1.amazonaws.com/dev corepack pnpm --filter @pelp/chat-web dev"
+        "import os; os.chdir('/Users/facundomendez/Documents/elpais-kiro'); os.environ['PATH']=os.path.expanduser('~/.nvm/versions/node/v22.22.0/bin')+':'+os.environ['PATH']; os.environ['VITE_API_PROXY']='https://m2gkn34u2c.execute-api.us-east-1.amazonaws.com/dev'; os.execvp('corepack',['corepack','pnpm','--filter','@pelp/chat-web','dev','--port','5173'])"
       ],
       "port": 5173
     },

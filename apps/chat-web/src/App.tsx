@@ -136,6 +136,8 @@ export function App() {
   return (
     <Routes>
       <Route path="/" element={home} />
+      {/* Misma pantalla: la conversación abierta se lee de la URL (ver Chat). */}
+      <Route path="/c/:conversationId" element={home} />
       <Route path="/terminos" element={<Terms />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
