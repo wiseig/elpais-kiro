@@ -187,4 +187,15 @@ export class ApiClient {
     if (typeof body.script !== 'string' || !body.script.trim()) throw new Error('La nota no tiene texto para leer.');
     return body.script;
   }
+
+  /** Enlace al MP3 de una nota, sintetizado por el servidor. Se genera una vez y se reutiliza. */
+  async articleAudioUrl(articleId: string, plan: 'base' | 'pro'): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/v1/notes/${encodeURIComponent(articleId)}/audio?plan=${plan}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error(`No se pudo generar el audio de la nota (${res.status}).`);
+    const body = (await res.json()) as { audioUrl?: unknown };
+    if (typeof body.audioUrl !== 'string' || !body.audioUrl) throw new Error('El servidor no devolvió audio.');
+    return body.audioUrl;
+  }
 }

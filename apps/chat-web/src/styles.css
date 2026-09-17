@@ -1583,3 +1583,4 @@ textarea, input { font: inherit; }
 }
 .source-listen:hover { color: var(--text, #111); border-color: var(--text-muted, #999); }
 .source-listen--active { color: var(--text, #111); border-color: currentColor; }
+.settings-hint { margin: 6px 0 0; font-size: 0.8rem; color: var(--text-muted, #666); }

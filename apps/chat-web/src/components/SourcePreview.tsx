@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { SourceItem } from '@pelp/domain';
 import { formatDate, sectionLabel, toIsoDate } from '../lib/format';
 import { speak, speechSupported, stopSpeaking, type SpeechState } from '../lib/speech';
+import { getVoicePreference, subscribeVoice } from '../lib/voice';
 import { useSourcePreview } from '../lib/preview';
 import type { ApiClient } from '../lib/api';
 import { ExternalIcon } from './Icons';
@@ -110,20 +111,35 @@ export function SourcePreviewCard({ item, api, onOpen }: CardProps) {
  */
 function ListenButton({ item, api }: { item: SourceItem; api: ApiClient }) {
   const [state, setState] = useState<SpeechState>('idle');
-  const puede = speechSupported();
-  if (!item.articleId || !puede) return null;
+  const voice = useSyncExternalStore(subscribeVoice, getVoicePreference, getVoicePreference);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Con la voz del navegador hace falta que el navegador sepa hablar; con las del servidor, no.
+  if (!item.articleId || (voice === 'navegador' && !speechSupported())) return null;
 
   const detener = () => {
     stopSpeaking();
+    audioRef.current?.pause();
+    audioRef.current = null;
     setState('idle');
   };
 
   const escuchar = async () => {
     setState('loading');
     try {
-      const script = await api.articleScript(item.articleId as string);
+      if (voice === 'navegador') {
+        const script = await api.articleScript(item.articleId as string);
+        setState('speaking');
+        speak(script, { onEnd: () => setState('idle'), onError: () => setState('error') });
+        return;
+      }
+      // La primera vez el servidor sintetiza y guarda; después el mismo pedido sale del caché.
+      const url = await api.articleAudioUrl(item.articleId as string, voice);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => setState('idle');
+      audio.onerror = () => setState('error');
+      await audio.play();
       setState('speaking');
-      speak(script, { onEnd: () => setState('idle'), onError: () => setState('error') });
     } catch {
       setState('error');
     }

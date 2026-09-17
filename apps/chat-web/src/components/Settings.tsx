@@ -1,9 +1,10 @@
-import { useId, useState } from 'react';
+import { useId, useState, useSyncExternalStore } from 'react';
 import { Link } from 'react-router-dom';
 import type { ReaderMode } from '@pelp/domain';
 import type { ConsentTextResponse, MeResponse } from '@pelp/domain/api';
 import { describeSaveError } from '../lib/errors';
 import { setThemePreference, useTheme, type ThemePreference } from '../lib/theme';
+import { VOICE_OPTIONS, getVoicePreference, setVoicePreference, subscribeVoice } from '../lib/voice';
 import { CloseIcon } from './Icons';
 import { Modal } from './Modal';
 
@@ -61,6 +62,7 @@ export function Settings({ me, consent, onClose, onOpenGate, onChangeMode, onDel
 
   const locked = busy !== null;
   const canToggle = me.mode === 'personalized' || (me.mode === 'neutral' && ageConfirmed);
+  const voice = useSyncExternalStore(subscribeVoice, getVoicePreference, getVoicePreference);
 
   function handleToggle() {
     if (locked || me.mode === 'undecided') return;
@@ -107,6 +109,25 @@ export function Settings({ me, consent, onClose, onOpenGate, onChangeMode, onDel
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="settings-section" aria-labelledby={`${titleId}-voice`}>
+          <h3 id={`${titleId}-voice`}>Voz de las notas</h3>
+          <div className="segmented" role="radiogroup" aria-label="Voz">
+            {VOICE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={voice === option.value}
+                className={voice === option.value ? 'segmented-btn segmented-btn--active' : 'segmented-btn'}
+                onClick={() => setVoicePreference(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <p className="settings-hint">{VOICE_OPTIONS.find((option) => option.value === voice)?.hint}</p>
         </section>
 
         <section className="settings-section" aria-labelledby={`${titleId}-mode`}>
