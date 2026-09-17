@@ -8,6 +8,7 @@ import { renderParagraphs } from '../lib/markdown';
 import { Notice } from './Notice';
 import { SourcePreviewCard } from './SourcePreview';
 import { ChevronDownIcon, InfoIcon, ThumbDownIcon, ThumbUpIcon } from './Icons';
+import { ListenButton } from './ListenButton';
 
 interface Props {
   answer: Answer;
@@ -256,6 +257,7 @@ export function AnswerCard({ answer, api, busy, onSuggestion, onConsentRequired 
             </span>
           </span>
           {showNoCoverageBadge ? <span className="badge badge--muted">Sin cobertura</span> : null}
+          <ListenButton answerId={answer.answerId} text={firstTextBlock?.text ?? ''} api={api} />
         </header>
 
         {neutralState === 'error' ? (

@@ -281,8 +281,8 @@ export const ConfigSchema = z.object({
             .default({}),
           pro: z
             .object({
-              voice: z.string().min(1).default('Lupe'),
-              engine: z.enum(['standard', 'neural', 'generative', 'long-form']).default('neural'),
+              voice: z.string().min(1).default('Pedro'),
+              engine: z.enum(['standard', 'neural', 'generative', 'long-form']).default('generative'),
               browserVoice: z.boolean().default(false),
             })
             .default({}),
@@ -442,8 +442,12 @@ export function defaultConfig(consentTextVersion: string, termsUrl = '/terminos'
       maxChars: 9000,
       defaultPlan: 'base',
       urlTtlMinutes: 60,
-      // Lupe es es-US, la más neutra para un oído rioplatense: las es-ES suenan peninsulares.
-      plans: { base: { voice: 'Lupe', engine: 'standard', browserVoice: true }, pro: { voice: 'Lupe', engine: 'neural', browserVoice: false } },
+      // Las dos voces son es-US, las más neutras para un oído rioplatense: las es-ES suenan
+      // peninsulares. Pedro se eligió escuchando cinco candidatas sobre la misma nota (17/9/2026).
+      // Pro va en `generative`, que es bastante más natural que `neural`: escuchadas las dos el
+      // 17/9/2026, neural sonaba plana. `long-form` suena todavía mejor y está pensado para leer
+      // notas, pero solo existe en español peninsular.
+      plans: { base: { voice: 'Lupe', engine: 'standard', browserVoice: true }, pro: { voice: 'Pedro', engine: 'generative', browserVoice: false } },
     },
     suggestions: { days: 7, max: 6, freshDays: 3, fallback: DEFAULT_SUGGESTIONS, cardTemplates: [...DEFAULT_CARD_TEMPLATES] },
   } satisfies ConfigInput);

@@ -11,7 +11,7 @@ import type {
   PatchMeRequest,
   SessionResponse,
 } from '@pelp/domain/api';
-import { AudioError, articleAudio } from '../core/audio';
+import { AudioError, answerAudio, articleAudio } from '../core/audio';
 import type { AudioStoreGateway, SpeechGateway } from '../core/gateways';
 import type { EngineDeps } from '../core/engine';
 import { askQuestion } from '../core/engine';
@@ -240,6 +240,32 @@ export async function handleHttp(deps: WebDeps, event: APIGatewayProxyEvent): Pr
         hadCoverage: log.hadCoverage,
       };
       return json(200, body, origin);
+    }
+
+    /** Lectura en voz de una respuesta. Solo para quien la recibió: misma puerta que /neutral. */
+    const answerAudioMatch = /^\/v1\/answers\/([A-Za-z0-9]+)\/audio$/.exec(path);
+    if (method === 'GET' && answerAudioMatch) {
+      const answerId = answerAudioMatch[1] ?? '';
+      if (!isUlid(answerId)) throw new HttpError(404, 'Respuesta no encontrada.', 'not_found');
+      const log = await deps.store.getQuestionLog(answerId);
+      if (!log) throw new HttpError(404, 'Respuesta no encontrada.', 'not_found');
+      const owns = await deps.store.getConversation(reader.profile.readerId, log.convId);
+      if (!owns) throw new HttpError(404, 'Respuesta no encontrada.', 'not_found');
+      // Se lee lo que el lector tiene delante: la adaptada si la hubo, si no la canónica.
+      const message = await deps.store.getMessage(log.convId, answerId).catch(() => undefined);
+      const query = event.queryStringParameters ?? {};
+      const plan = isAudioPlan(query.plan) ? query.plan : config.audio.defaultPlan;
+      try {
+        const result = await answerAudio(
+          { store: deps.store, corpusBody: deps.corpusBody, audioStore: deps.audioStore, speech: deps.speech, log: deps.log },
+          config,
+          { answerId, text: message?.adaptedAnswer || log.canonicalAnswer, plan, mode: isAudioMode(query.mode) ? query.mode : 'audio' },
+        );
+        return json(200, result, origin);
+      } catch (error) {
+        if (error instanceof AudioError) throw new HttpError(error.status, error.message, error.code);
+        throw error;
+      }
     }
 
     if (method === 'POST' && path === '/v1/feedback') {

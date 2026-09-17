@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { SendIcon, Spinner } from './Icons';
+import { MicIcon, SendIcon, Spinner } from './Icons';
+import { recognitionSupported, startListening } from '../lib/listen';
 
 interface Props {
   /** true mientras falta decidir el consentimiento: el campo queda deshabilitado. */
@@ -8,13 +9,15 @@ interface Props {
   loading: boolean;
   maxLength: number;
   onSend: (text: string) => void;
+  /** Se llama cuando la pregunta llegó dictada: la respuesta se lee en voz alta. */
+  onVoiceSend?: (text: string) => void;
 }
 
 const MAX_HEIGHT = 200;
 const WARN_UNDER = 60;
 
 /** Barra de mensaje ancoada abajo: pill auto-expansible, contador y disclaimer legal. */
-export function Composer({ disabled, loading, maxLength, onSend }: Props) {
+export function Composer({ disabled, loading, maxLength, onSend, onVoiceSend }: Props) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputId = useId();
@@ -34,6 +37,37 @@ export function Composer({ disabled, loading, maxLength, onSend }: Props) {
     window.addEventListener('resize', fit);
     return () => window.removeEventListener('resize', fit);
   }, [value]);
+
+  const [listening, setListening] = useState(false);
+  const stopListenRef = useRef<(() => void) | null>(null);
+  const puedeDictar = recognitionSupported();
+
+  // Dictar y enviar es un solo gesto: se habla, se corta al callar y la pregunta sale sola. Pedir
+  // un segundo clic en "enviar" rompe la idea de conversar.
+  function toggleMic() {
+    if (listening) {
+      stopListenRef.current?.();
+      stopListenRef.current = null;
+      setListening(false);
+      return;
+    }
+    setListening(true);
+    stopListenRef.current = startListening({
+      onPartial: (text) => setValue(text),
+      onFinal: (text) => {
+        setValue('');
+        (onVoiceSend ?? onSend)(text.slice(0, maxLength));
+      },
+      onEnd: () => {
+        stopListenRef.current = null;
+        setListening(false);
+      },
+      onError: () => {
+        stopListenRef.current = null;
+        setListening(false);
+      },
+    });
+  }
 
   const trimmed = value.trim();
   const canSend = !disabled && !loading && trimmed.length > 0 && trimmed.length <= maxLength;
@@ -82,6 +116,18 @@ export function Composer({ disabled, loading, maxLength, onSend }: Props) {
           <span id={counterId} className={remaining < WARN_UNDER ? 'counter counter--warn' : 'counter'}>
             {value.length}/{maxLength}
           </span>
+          {puedeDictar ? (
+            <button
+              type="button"
+              className={listening ? 'mic-btn mic-btn--on' : 'mic-btn'}
+              onClick={toggleMic}
+              disabled={disabled || loading}
+              aria-pressed={listening}
+              aria-label={listening ? 'Dejar de dictar' : 'Preguntar hablando'}
+            >
+              <MicIcon />
+            </button>
+          ) : null}
           <button type="submit" className="send-btn" aria-label="Enviar pregunta" disabled={!canSend}>
             {loading ? <Spinner /> : <SendIcon />}
           </button>

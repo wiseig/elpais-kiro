@@ -16,6 +16,9 @@ import {
   type ChatItem,
   type ConversationSummary,
 } from '../lib/history';
+import { startHum, stopHum } from '../lib/hum';
+import { speak, speechSupported, stopSpeaking } from '../lib/speech';
+import { getVoicePreference } from '../lib/voice';
 import { getToken } from '../lib/session';
 import { Composer } from './Composer';
 import { ConsentGate, type GateDecision } from './ConsentGate';
@@ -25,6 +28,7 @@ import { HelpModal } from './HelpModal';
 import { HistoryModal } from './HistoryModal';
 import { Home } from './Home';
 import { Rail } from './Rail';
+import { VoiceOrb } from './VoiceOrb';
 import { Settings } from './Settings';
 
 export const MAX_QUESTION_LENGTH = 500;
@@ -82,6 +86,41 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
   const [historyOpen, setHistoryOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  /** La pregunta se dictó: la respuesta se lee en voz alta y se muestra el orbe. */
+  const [voiceTurn, setVoiceTurn] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  // El estado vive también en una ref: `send` es asíncrono y lee el valor de cuando arrancó.
+  const voiceRef = useRef(false);
+
+  /**
+   * Lee la respuesta que acaba de llegar. Se usa la voz del navegador aunque la preferencia sea
+   * una del servidor: en una conversación hablada, esperar a que se sintetice un MP3 rompe el ida
+   * y vuelta. La voz buena sigue estando en el botón "Escuchar" de cada respuesta.
+   */
+  function hablarRespuesta(answer: Answer) {
+    const texto = answer.blocks.find((block) => block.type === 'text');
+    const contenido = texto && 'text' in texto ? texto.text : '';
+    if (!contenido.trim() || !speechSupported()) {
+      voiceRef.current = false;
+      setVoiceTurn(false);
+      return;
+    }
+    setSpeaking(true);
+    const terminar = () => {
+      setSpeaking(false);
+      voiceRef.current = false;
+      setVoiceTurn(false);
+    };
+    speak(contenido, { onEnd: terminar, onError: terminar });
+  }
+
+  function cortarVoz() {
+    stopHum();
+    stopSpeaking();
+    setSpeaking(false);
+    voiceRef.current = false;
+    setVoiceTurn(false);
+  }
   const idPrefix = useRef(Date.now().toString(36));
   const idCounter = useRef(0);
   const mainRef = useRef<HTMLElement>(null);
@@ -195,10 +234,17 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         setItems((prev) => [...prev, { kind: 'user', id: newId(), text: question }]);
       }
       setLoading(true);
+      // El "mmm" solo mientras piensa, y solo si la pregunta vino hablada: en el chat escrito
+      // sería ruido sin motivo.
+      if (voiceRef.current) startHum();
       try {
         const answer = await api.ask({ question, conversationId: conversationRef.current });
         if (answer.conversationId) conversationRef.current = answer.conversationId;
         setItems((prev) => [...prev, { kind: 'answer', id: newId(), answer }]);
+        if (voiceRef.current) {
+          stopHum();
+          hablarRespuesta(answer);
+        }
         if (hasNotice(answer, 'consent_required')) {
           setGateOpen(true);
           refreshMe();
@@ -220,6 +266,13 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         }
       } finally {
         setLoading(false);
+        // Si la pregunta falló no hay nada que leer: se corta el "mmm" y se sale del modo voz,
+        // que si no queda sonando contra un error en pantalla.
+        stopHum();
+        if (voiceRef.current && !window.speechSynthesis?.speaking) {
+          voiceRef.current = false;
+          setVoiceTurn(false);
+        }
       }
     },
     [api, loading, me.needsConsent, refreshMe],
@@ -373,11 +426,23 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
                 </button>
               </div>
             ) : null}
+            {voiceTurn ? (
+              <button type="button" className="orb-stop" onClick={cortarVoz} aria-label="Cortar la conversación por voz">
+                <VoiceOrb state={speaking ? 'speaking' : loading ? 'thinking' : 'listening'} />
+              </button>
+            ) : null}
             <Composer
               disabled={me.needsConsent}
               loading={loading}
               maxLength={MAX_QUESTION_LENGTH}
               onSend={(question) => void send(question)}
+              onVoiceSend={(question) => {
+                // La pregunta dictada entra por el mismo camino que una escrita: queda en el hilo,
+                // en Recientes y en el Historial como cualquier otra.
+                voiceRef.current = true;
+                setVoiceTurn(true);
+                void send(question);
+              }}
             />
           </div>
         </div>

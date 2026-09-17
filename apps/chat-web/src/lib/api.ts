@@ -188,6 +188,13 @@ export class ApiClient {
     return body.script;
   }
 
+  /** Enlace al MP3 de una respuesta generada. Se sintetiza una vez y se reutiliza. */
+  async answerAudioUrl(answerId: string, plan: 'base' | 'pro'): Promise<string> {
+    const body = await this.request<{ audioUrl?: string }>('GET', `/v1/answers/${encodeURIComponent(answerId)}/audio?plan=${plan}`);
+    if (!body.audioUrl) throw new Error('El servidor no devolvió audio.');
+    return body.audioUrl;
+  }
+
   /** Enlace al MP3 de una nota, sintetizado por el servidor. Se genera una vez y se reutiliza. */
   async articleAudioUrl(articleId: string, plan: 'base' | 'pro'): Promise<string> {
     const res = await fetch(`${this.baseUrl}/v1/notes/${encodeURIComponent(articleId)}/audio?plan=${plan}`, {

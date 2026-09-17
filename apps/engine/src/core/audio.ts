@@ -105,3 +105,39 @@ export async function articleAudio(
   await deps.audioStore.put(key, bytes, 'audio/mpeg');
   return { ...base, audioUrl: await deps.audioStore.signedUrl(key, ttl), voice: plan.voice, engine: plan.engine, cached: false };
 }
+
+/**
+ * Lectura en voz de una respuesta generada. Es lo que el lector tiene delante: si la respuesta se
+ * adaptó a su perfil, se lee la adaptada y no la canónica. Se guarda igual que el audio de una
+ * nota, con la huella del texto adentro de la clave: una respuesta no cambia, así que se sintetiza
+ * una sola vez.
+ */
+export async function answerAudio(
+  deps: AudioDeps,
+  config: Config,
+  input: { answerId: string; text: string; plan: AudioPlan; mode: AudioMode },
+): Promise<{ answerId: string; plan: AudioPlan; chars: number; script?: string; audioUrl?: string; voice?: string; engine?: string; cached?: boolean }> {
+  if (!config.audio.enabled) throw new AudioError(503, 'La lectura en voz está apagada.', 'audio_disabled');
+  const text = input.text.trim().slice(0, config.audio.maxChars);
+  if (!text) throw new AudioError(404, 'La respuesta no tiene texto para leer.', 'not_found');
+
+  const base = { answerId: input.answerId, plan: input.plan, chars: text.length };
+  if (input.mode === 'script') return { ...base, script: text };
+
+  const plan = config.audio.plans[input.plan];
+  if (!deps.audioStore || !deps.speech) throw new AudioError(503, 'La síntesis de voz no está disponible.', 'audio_unavailable');
+
+  const fingerprint = sha256Hex([sha256Hex(text), plan.voice, plan.engine, AUDIO_SCRIPT_VERSION].join('|')).slice(0, 16);
+  const key = `audio/answers/${input.answerId}/${fingerprint}.mp3`;
+  const ttl = config.audio.urlTtlMinutes * 60;
+  if (await deps.audioStore.exists(key)) {
+    deps.log.info('audio.answer_cache_hit', { answerId: input.answerId, plan: input.plan });
+    return { ...base, audioUrl: await deps.audioStore.signedUrl(key, ttl), voice: plan.voice, engine: plan.engine, cached: true };
+  }
+
+  deps.log.info('audio.answer_synthesize', { answerId: input.answerId, plan: input.plan, voice: plan.voice, engine: plan.engine, chars: text.length });
+  const bytes = await deps.speech.synthesize({ text, voice: plan.voice, engine: plan.engine });
+  if (!bytes.length) throw new AudioError(502, 'No se pudo generar el audio.', 'audio_failed');
+  await deps.audioStore.put(key, bytes, 'audio/mpeg');
+  return { ...base, audioUrl: await deps.audioStore.signedUrl(key, ttl), voice: plan.voice, engine: plan.engine, cached: false };
+}
