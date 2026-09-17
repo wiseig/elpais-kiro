@@ -1,0 +1,122 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { startListening } from '../src/lib/listen';
+
+/** Reconocimiento falso: deja disparar a mano lo que el navegador dispararía. */
+class FakeRecognition {
+  lang = '';
+  continuous = false;
+  interimResults = false;
+  started = false;
+  stopped = false;
+  aborted = false;
+  onresult: ((event: unknown) => void) | null = null;
+  onspeechend: (() => void) | null = null;
+  onend: (() => void) | null = null;
+  onerror: ((event: { error?: string }) => void) | null = null;
+  static last: FakeRecognition | undefined;
+
+  constructor() {
+    FakeRecognition.last = this;
+  }
+  start() {
+    this.started = true;
+  }
+  /** Como el navegador: `stop` entrega lo escuchado y termina. */
+  stop() {
+    this.stopped = true;
+    this.onend?.();
+  }
+  abort() {
+    this.aborted = true;
+  }
+  emit(transcript: string, isFinal: boolean) {
+    this.onresult?.({ resultIndex: 0, results: [Object.assign([{ transcript }], { isFinal })] });
+  }
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  (globalThis as unknown as { window: unknown }).window = globalThis;
+  (globalThis as unknown as { SpeechRecognition: unknown }).SpeechRecognition = FakeRecognition;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  FakeRecognition.last = undefined;
+});
+
+describe('startListening', () => {
+  it('cierra solo tras un silencio y entrega lo dicho', () => {
+    const onFinal = vi.fn();
+    const onEnd = vi.fn();
+    startListening({ onFinal, onEnd });
+    const recognition = FakeRecognition.last!;
+    expect(recognition.started).toBe(true);
+
+    recognition.emit('¿Cómo cerró el dólar?', true);
+    // Todavía no: la persona podría seguir hablando.
+    vi.advanceTimersByTime(1000);
+    expect(onFinal).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1000);
+    expect(recognition.stopped).toBe(true);
+    expect(onFinal).toHaveBeenCalledWith('¿Cómo cerró el dólar?');
+    expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('cada palabra nueva corre el reloj del silencio', () => {
+    const onFinal = vi.fn();
+    startListening({ onFinal });
+    const recognition = FakeRecognition.last!;
+    for (let i = 0; i < 5; i += 1) {
+      recognition.emit(`palabra ${i} `, false);
+      vi.advanceTimersByTime(1200);
+      expect(onFinal).not.toHaveBeenCalled();
+    }
+    vi.advanceTimersByTime(1700);
+    expect(onFinal).toHaveBeenCalledTimes(1);
+  });
+
+  it('usa lo provisional cuando el navegador nunca marca el final', () => {
+    const onFinal = vi.fn();
+    startListening({ onFinal });
+    const recognition = FakeRecognition.last!;
+    recognition.emit('qué pasó hoy', false);
+    vi.advanceTimersByTime(1700);
+    expect(onFinal).toHaveBeenCalledWith('qué pasó hoy');
+  });
+
+  it('si no se escucha nada, se cierra sin mandar pregunta', () => {
+    const onFinal = vi.fn();
+    const onEnd = vi.fn();
+    startListening({ onFinal, onEnd });
+    vi.advanceTimersByTime(7100);
+    expect(FakeRecognition.last!.stopped).toBe(true);
+    expect(onFinal).not.toHaveBeenCalled();
+    expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('no queda abierto para siempre con ruido de fondo', () => {
+    const onFinal = vi.fn();
+    startListening({ onFinal });
+    const recognition = FakeRecognition.last!;
+    // Ruido constante: cada resultado rearma el silencio, así que solo corta el tope duro.
+    for (let i = 0; i < 40; i += 1) {
+      recognition.emit('mmm ', false);
+      vi.advanceTimersByTime(1000);
+    }
+    expect(recognition.stopped).toBe(true);
+  });
+
+  it('cortar a mano no manda la pregunta', () => {
+    const onFinal = vi.fn();
+    const onEnd = vi.fn();
+    const cancelar = startListening({ onFinal, onEnd });
+    FakeRecognition.last!.emit('algo', true);
+    cancelar();
+    vi.advanceTimersByTime(5000);
+    expect(FakeRecognition.last!.aborted).toBe(true);
+    expect(onFinal).not.toHaveBeenCalled();
+    expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+});

@@ -12,9 +12,17 @@ interface RecognitionLike {
   stop(): void;
   abort(): void;
   onresult: ((event: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
+  onspeechend: (() => void) | null;
   onend: (() => void) | null;
   onerror: ((event: { error?: string }) => void) | null;
 }
+
+/** Silencio que se toma como "ya terminó de hablar". */
+const SILENCE_MS = 1600;
+/** Si no se escucha nada en todo este rato, se cierra solo en vez de quedar abierto. */
+const NO_SPEECH_MS = 7000;
+/** Tope duro: ni con ruido de fondo el micrófono se queda abierto para siempre. */
+const MAX_MS = 25000;
 
 type RecognitionCtor = new () => RecognitionLike;
 
@@ -53,27 +61,106 @@ export function startListening(handlers: ListenHandlers): () => void {
   recognition.interimResults = true;
 
   let final = '';
+  let ultimoParcial = '';
+  let cerrado = false;
+  let silencio: ReturnType<typeof setTimeout> | undefined;
+
+  const limpiar = () => {
+    if (silencio) clearTimeout(silencio);
+    silencio = undefined;
+  };
+
+  /**
+   * El corte lo maneja esta cuenta y no el navegador. Chrome no siempre marca el resultado como
+   * final ni dispara el fin cuando hay ruido de fondo, así que el micrófono quedaba abierto para
+   * siempre; acá se cierra solo después de un silencio.
+   */
+  const rearmar = (ms: number) => {
+    limpiar();
+    silencio = setTimeout(() => {
+      try {
+        // `stop` entrega lo escuchado; `abort` lo tira. Acá se quiere la pregunta.
+        recognition.stop();
+      } catch {
+        cerrar();
+      }
+    }, ms);
+  };
+
+  const cerrar = () => {
+    if (cerrado) return;
+    cerrado = true;
+    limpiar();
+    const texto = (final || ultimoParcial).trim();
+    if (texto) handlers.onFinal(texto);
+    handlers.onEnd?.();
+  };
+
+  const tope = setTimeout(() => {
+    try {
+      recognition.stop();
+    } catch {
+      cerrar();
+    }
+  }, MAX_MS);
+
   recognition.onresult = (event) => {
-    let partial = '';
+    let parcial = '';
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const result = event.results[i];
       const text = result?.[0]?.transcript ?? '';
       if (result?.isFinal) final += text;
-      else partial += text;
+      else parcial += text;
     }
-    if (partial) handlers.onPartial?.((final + partial).trim());
+    const visible = (final + parcial).trim();
+    if (visible) {
+      ultimoParcial = visible;
+      handlers.onPartial?.(visible);
+    }
+    // Ya se escuchó algo: a partir de acá alcanza con una pausa corta para dar por terminado.
+    rearmar(SILENCE_MS);
   };
-  recognition.onerror = (event) => handlers.onError?.(event.error ?? 'error');
+
+  recognition.onspeechend = () => rearmar(400);
+
+  recognition.onerror = (event) => {
+    const motivo = event.error ?? 'error';
+    // "no-speech" no es un error para quien habla: simplemente no dijo nada.
+    if (motivo === 'no-speech' || motivo === 'aborted') {
+      clearTimeout(tope);
+      cerrar();
+      return;
+    }
+    clearTimeout(tope);
+    limpiar();
+    if (!cerrado) {
+      cerrado = true;
+      handlers.onError?.(motivo);
+    }
+  };
+
   recognition.onend = () => {
-    const text = final.trim();
-    if (text) handlers.onFinal(text);
-    handlers.onEnd?.();
+    clearTimeout(tope);
+    cerrar();
   };
 
   try {
     recognition.start();
+    rearmar(NO_SPEECH_MS);
   } catch {
+    clearTimeout(tope);
     handlers.onError?.('start_failed');
   }
-  return () => recognition.abort();
+
+  return () => {
+    clearTimeout(tope);
+    limpiar();
+    cerrado = true;
+    try {
+      recognition.abort();
+    } catch {
+      // Cortar a mano no puede fallar hacia afuera.
+    }
+    handlers.onEnd?.();
+  };
 }
