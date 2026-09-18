@@ -61,6 +61,15 @@ describe('stacks pelp-*', () => {
   it('APIs con WAF, Lambdas Node 22 arm64 y cola con DLQ', () => {
     templates.engine.resourceCountIs('AWS::WAFv2::WebACLAssociation', 1);
     templates.backoffice.resourceCountIs('AWS::WAFv2::WebACLAssociation', 1);
+    // WhatsApp entra por SNS desde End User Messaging: hay tema, suscripción y permiso de publicar
+    // para el servicio; no hay ruta /channels/whatsapp ni secreto de Meta.
+    templates.channels.resourceCountIs('AWS::SNS::Topic', 1);
+    templates.channels.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'lambda' });
+    templates.channels.hasResourceProperties('AWS::SNS::TopicPolicy', {
+      PolicyDocument: { Statement: Match.arrayWith([Match.objectLike({ Principal: { Service: 'social-messaging.amazonaws.com' }, Action: 'sns:Publish' })]) },
+    });
+    templates.channels.resourcePropertiesCountIs('AWS::ApiGateway::Resource', { PathPart: 'whatsapp' }, 0);
+    templates.data.resourcePropertiesCountIs('AWS::SecretsManager::Secret', { Name: Match.stringLikeRegexp('channels/whatsapp') }, 0);
     // El backoffice manda la configuración entera en el cuerpo: sin contar SizeRestrictions_BODY,
     // el WAF bloquea todo guardado apenas la configuración pasa los 8 KB (16/9/2026).
     // El backoffice habla con la API a través de su propia distribución: el cuerpo pasa por las

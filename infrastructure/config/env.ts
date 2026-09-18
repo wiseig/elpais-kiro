@@ -25,6 +25,11 @@ export interface PelpEnv {
   eventBusName: string;
   inboundQueueName: string;
   alertEmail?: string;
+  /**
+   * Id del número de origen de WhatsApp en End User Messaging. Existe recién después de vincular
+   * la cuenta desde la consola; vacío, la entrega falla cerrado con un error claro. No es secreto.
+   */
+  whatsappOriginationPhoneNumberId?: string;
   allowedOrigin: string;
   termsUrl: string;
   /**
@@ -71,6 +76,9 @@ export function loadEnv(app: App): PelpEnv {
     eventBusName: `pelp-events${suffix}`,
     inboundQueueName: `pelp-inbound${suffix}`,
     ...(context(app, 'alertEmail') ?? process.env.PELP_ALERT_EMAIL ? { alertEmail: context(app, 'alertEmail') ?? process.env.PELP_ALERT_EMAIL } : {}),
+    ...(context(app, 'whatsappOriginationPhoneNumberId') ?? process.env.PELP_WHATSAPP_ORIGINATION_PHONE_NUMBER_ID
+      ? { whatsappOriginationPhoneNumberId: context(app, 'whatsappOriginationPhoneNumberId') ?? process.env.PELP_WHATSAPP_ORIGINATION_PHONE_NUMBER_ID }
+      : {}),
     allowedOrigin: context(app, 'allowedOrigin') ?? '*',
     termsUrl: context(app, 'termsUrl') ?? '/terminos',
     devShutdown,

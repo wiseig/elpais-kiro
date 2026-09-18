@@ -1,7 +1,7 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { APIGatewayProxyEvent, APIGatewayProxyResult, EventBridgeEvent } from 'aws-lambda';
+import type { EventBridgeEvent, SNSEvent } from 'aws-lambda';
 import { DynamoDBClient, GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { SendWhatsAppMessageCommand, SocialMessagingClient } from '@aws-sdk/client-socialmessaging';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import type { Answer, InboundMessage } from '@pelp/domain';
 import { CONSENT_BUTTONS, CURRENT_CONSENT_TEXT, CURRENT_CONSENT_TEXT_VERSION, TENANT_ID } from '@pelp/domain';
@@ -9,14 +9,41 @@ import { hashChannelIdentity } from '@pelp/domain/node';
 import { answerToPlainText, type ChannelAdapter, type ChannelContext, type OutboundPayload } from '@pelp/channel-sdk';
 
 /**
- * Adaptador WhatsApp (Meta Cloud API, fase 3 — sección 10.3).
- * El número en claro vive exclusivamente en este proceso y en la tabla privada del canal.
- * SQS y AnswerReady usan siempre channelUserId hasheado; las acciones de canal viajan como
- * meta.action y text vacío para que consentimiento/borrado no se interpreten como preguntas.
+ * Adaptador WhatsApp sobre AWS End User Messaging Social (sección 10.3).
+ *
+ * Hasta el 18/9/2026 hablaba directo con la Cloud API de Meta: un webhook público con firma
+ * HMAC y un token de acceso de larga vida en Secrets Manager. Ahora AWS recibe el webhook de
+ * Meta y lo publica en un tema de SNS al que está suscrita esta Lambda, y el envío es una llamada
+ * al SDK con IAM. Se van todos los secretos de Meta (app secret, verify token, token, id del
+ * número) y el webhook público con su verificación de firma; queda solo el secreto de identidad,
+ * que es nuestro. Lo que no cambia: el número en claro vive exclusivamente en este proceso y en
+ * la tabla privada del canal; SQS y AnswerReady usan siempre channelUserId hasheado; las acciones
+ * de canal viajan como meta.action y text vacío para que consentimiento/borrado no se interpreten
+ * como preguntas.
+ *
+ * Meta no desaparece: hace falta una WhatsApp Business Account vinculada desde la consola de AWS
+ * (Embedded Signup) y un número. Con el negocio sin verificar se puede operar con los límites que
+ * Meta pone a esa etapa; para este asistente, que solo responde, alcanza.
  */
 
+/** El cuerpo del webhook de Meta, tal como lo reenvía AWS. */
 interface WhatsAppWebhook {
-  entry?: { changes?: { value?: { messages?: WhatsAppMessage[]; metadata?: { phone_number_id?: string } } }[] }[];
+  entry?: WhatsAppEntry[];
+}
+
+interface WhatsAppEntry {
+  changes?: { value?: { messages?: WhatsAppMessage[]; metadata?: { phone_number_id?: string } } }[];
+}
+
+/**
+ * Lo que End User Messaging publica en SNS: la entrada del webhook de Meta como texto, más el
+ * contexto de la cuenta. Se acepta también el cuerpo crudo de Meta, por si el evento llega sin
+ * envolver (pruebas, o un cambio de formato del servicio).
+ */
+interface SocialMessagingNotification {
+  webhookEntry?: string;
+  context?: { MetaWaId?: string; MetaPhoneNumberIds?: string[] };
+  message_timestamp?: string;
 }
 
 interface WhatsAppMessage {
@@ -56,31 +83,20 @@ function actionForMessage(message: WhatsAppMessage, text: string): WhatsAppActio
   return message.type === 'text' || message.text?.body !== undefined ? normalizeCommand(text) : undefined;
 }
 let hydrated = false;
-/** Secretos por ARN (Secrets Manager), nunca en variables de entorno en claro (sección 15). */
-async function hydrateEnvFromSecrets(map: Record<string, string>): Promise<void> {
-  if (hydrated) return;
+/** El secreto de identidad por ARN (Secrets Manager), nunca en variables de entorno en claro (sección 15). */
+async function hydrateIdentitySecret(): Promise<void> {
+  if (hydrated || process.env.PELP_IDENTITY_SECRET) return;
   hydrated = true;
+  const arn = process.env.IDENTITY_SECRET_ARN;
+  if (!arn) return;
   const client = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-  const read = async (arn: string | undefined): Promise<string | undefined> => {
-    if (!arn) return undefined;
-    const output = await client.send(new GetSecretValueCommand({ SecretId: arn }));
-    return output.SecretString;
-  };
-  const identity = await read(process.env.IDENTITY_SECRET_ARN);
-  if (identity && !process.env.PELP_IDENTITY_SECRET) {
-    try {
-      process.env.PELP_IDENTITY_SECRET = (JSON.parse(identity) as { secret?: string }).secret ?? identity;
-    } catch {
-      process.env.PELP_IDENTITY_SECRET = identity;
-    }
-  }
-  const channel = await read(process.env.CHANNEL_SECRET_ARN);
-  if (channel) {
-    const json = JSON.parse(channel) as Record<string, string | undefined>;
-    for (const [envName, key] of Object.entries(map)) {
-      const value = json[key];
-      if (!process.env[envName] && value && value !== 'PLACEHOLDER') process.env[envName] = value;
-    }
+  const output = await client.send(new GetSecretValueCommand({ SecretId: arn }));
+  const identity = output.SecretString;
+  if (!identity) return;
+  try {
+    process.env.PELP_IDENTITY_SECRET = (JSON.parse(identity) as { secret?: string }).secret ?? identity;
+  } catch {
+    process.env.PELP_IDENTITY_SECRET = identity;
   }
 }
 
@@ -92,11 +108,6 @@ function parseConsentButton(id: string | undefined): { action: 'consent_personal
   return { action: base, ...(version ? { textVersion: version } : {}) };
 }
 
-
-function rawBody(req: APIGatewayProxyEvent): Buffer | undefined {
-  if (!req.body) return undefined;
-  return req.isBase64Encoded ? Buffer.from(req.body, 'base64') : Buffer.from(req.body, 'utf8');
-}
 
 function identityKey(channelUserId: string): { PK: { S: string }; SK: { S: string } } {
   return { PK: { S: `TENANT#${TENANT_ID}#CHANNEL#whatsapp#IDENT#${channelUserId}` }, SK: { S: 'DELIVERY' } };
@@ -136,55 +147,64 @@ export class WhatsAppIdentityStore {
   }
 }
 
-export class WhatsAppAdapter implements ChannelAdapter<APIGatewayProxyEvent> {
+/** Cliente de envío, inyectable en las pruebas. */
+export interface WhatsAppSender {
+  send(command: SendWhatsAppMessageCommand): Promise<{ messageId?: string | undefined }>;
+}
+
+/** Versión de la Graph API de Meta con la que se arma el cuerpo. AWS la reenvía tal cual. */
+export const META_API_VERSION = 'v20.0';
+
+export class WhatsAppAdapter implements ChannelAdapter<SNSEvent> {
   readonly channel = 'whatsapp';
 
   constructor(
-    private readonly secrets: { appSecret?: string; identitySecret?: string; accessToken?: string; phoneNumberId?: string },
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly options: { identitySecret?: string; originationPhoneNumberId?: string },
+    private readonly sender: WhatsAppSender = new SocialMessagingClient({ region: process.env.AWS_REGION ?? 'us-east-1' }),
   ) {}
 
-  verify(req: APIGatewayProxyEvent): boolean {
-    const header = req.headers['x-hub-signature-256'] ?? req.headers['X-Hub-Signature-256'];
-    const raw = rawBody(req);
-    if (!header || !raw || !this.secrets.appSecret) return false;
-    const expected = `sha256=${createHmac('sha256', this.secrets.appSecret).update(raw).digest('hex')}`;
-    return expected.length === header.length && timingSafeEqual(Buffer.from(expected), Buffer.from(header));
+  /**
+   * La autenticidad la da la ruta: el evento llega por un tema de SNS al que solo publica End
+   * User Messaging (política del tema) y solo consume esta Lambda. No hay firma de Meta que
+   * comprobar porque el webhook ya no es nuestro.
+   */
+  verify(req: SNSEvent): boolean {
+    return Array.isArray(req.Records) && req.Records.every((record) => record.EventSource === 'aws:sns');
   }
 
-  parse(req: APIGatewayProxyEvent): InboundMessage[] {
+  parse(req: SNSEvent): InboundMessage[] {
     return this.parseWithIdentities(req).map(({ inbound }) => inbound);
   }
 
-  parseWithIdentities(req: APIGatewayProxyEvent): ParsedWhatsAppMessage[] {
-    const raw = rawBody(req);
-    if (!raw) return [];
-    if (!this.secrets.identitySecret) throw new Error('WhatsApp identity secret no configurado');
-    const payload = JSON.parse(raw.toString('utf8')) as WhatsAppWebhook;
+  parseWithIdentities(req: SNSEvent): ParsedWhatsAppMessage[] {
+    if (!this.options.identitySecret) throw new Error('WhatsApp identity secret no configurado');
     const out: ParsedWhatsAppMessage[] = [];
-    for (const entry of payload.entry ?? []) {
-      for (const change of entry.changes ?? []) {
-        for (const message of change.value?.messages ?? []) {
-          const text = (message.text?.body ?? message.interactive?.button_reply?.title ?? '').trim();
-          const action = actionForMessage(message, text);
-          if (!message.from || (!text && !action)) continue;
-          const channelUserId = hashChannelIdentity(this.secrets.identitySecret, this.channel, message.from);
-          out.push({
-            phoneNumber: message.from,
-            inbound: {
-              tenantId: TENANT_ID,
-              channel: this.channel,
-              channelUserId,
-              text: action ? '' : text,
-              receivedAt: message.timestamp ? new Date(Number(message.timestamp) * 1000).toISOString() : new Date().toISOString(),
-              meta: {
-                messageId: message.id ?? '',
-                buttonId: message.interactive?.button_reply?.id ?? '',
-                ...(action ? { action } : {}),
-                ...(parseConsentButton(message.interactive?.button_reply?.id)?.textVersion ? { textVersion: parseConsentButton(message.interactive?.button_reply?.id)?.textVersion ?? '' } : {}),
+    for (const record of req.Records ?? []) {
+      for (const entry of entriesFrom(record.Sns?.Message)) {
+        for (const change of entry.changes ?? []) {
+          for (const message of change.value?.messages ?? []) {
+            const text = (message.text?.body ?? message.interactive?.button_reply?.title ?? '').trim();
+            const action = actionForMessage(message, text);
+            if (!message.from || (!text && !action)) continue;
+            const channelUserId = hashChannelIdentity(this.options.identitySecret, this.channel, message.from);
+            const textVersion = parseConsentButton(message.interactive?.button_reply?.id)?.textVersion;
+            out.push({
+              phoneNumber: message.from,
+              inbound: {
+                tenantId: TENANT_ID,
+                channel: this.channel,
+                channelUserId,
+                text: action ? '' : text,
+                receivedAt: message.timestamp ? new Date(Number(message.timestamp) * 1000).toISOString() : new Date().toISOString(),
+                meta: {
+                  messageId: message.id ?? '',
+                  buttonId: message.interactive?.button_reply?.id ?? '',
+                  ...(action ? { action } : {}),
+                  ...(textVersion ? { textVersion } : {}),
+                },
               },
-            },
-          });
+            });
+          }
         }
       }
     }
@@ -227,8 +247,10 @@ export class WhatsAppAdapter implements ChannelAdapter<APIGatewayProxyEvent> {
   }
 
   async deliver(payloads: OutboundPayload[], ctx: ChannelContext): Promise<void> {
-    if (!this.secrets.accessToken || !this.secrets.phoneNumberId) throw new Error('WhatsApp sin token o phoneNumberId configurados');
+    const originationPhoneNumberId = this.options.originationPhoneNumberId;
+    if (!originationPhoneNumberId) throw new Error('WhatsApp sin número de origen configurado (WHATSAPP_ORIGINATION_PHONE_NUMBER_ID)');
     for (const payload of payloads) {
+      // El mismo cuerpo que pide la Cloud API de Meta: AWS lo reenvía sin tocarlo.
       const body = payload.kind === 'buttons'
         ? {
             messaging_product: 'whatsapp', to: ctx.channelUserId, type: 'interactive',
@@ -238,12 +260,35 @@ export class WhatsAppAdapter implements ChannelAdapter<APIGatewayProxyEvent> {
             },
           }
         : { messaging_product: 'whatsapp', to: ctx.channelUserId, type: 'text', text: { body: payload.kind === 'text' ? payload.text : JSON.stringify(payload) } };
-      const response = await this.fetchImpl(`https://graph.facebook.com/v20.0/${this.secrets.phoneNumberId}/messages`, {
-        method: 'POST', headers: { Authorization: `Bearer ${this.secrets.accessToken}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
-      });
-      if (!response.ok) throw new Error(`WhatsApp API ${response.status}`);
+      await this.sender.send(new SendWhatsAppMessageCommand({
+        originationPhoneNumberId,
+        metaApiVersion: META_API_VERSION,
+        message: new TextEncoder().encode(JSON.stringify(body)),
+      }));
     }
   }
+}
+
+/** Las entradas del webhook de Meta que trae una notificación de SNS, envuelta o cruda. */
+export function entriesFrom(message: string | undefined): WhatsAppEntry[] {
+  if (!message) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(message);
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== 'object' || parsed === null) return [];
+  const wrapped = parsed as SocialMessagingNotification & WhatsAppWebhook;
+  if (typeof wrapped.webhookEntry === 'string') {
+    try {
+      const entry = JSON.parse(wrapped.webhookEntry) as WhatsAppEntry | WhatsAppEntry[];
+      return Array.isArray(entry) ? entry : [entry];
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(wrapped.entry) ? wrapped.entry : [];
 }
 
 let sqs: SQSClient | undefined;
@@ -268,31 +313,21 @@ export function inboundQueueBody(inbound: InboundMessage): string {
 }
 
 /** Webhook: GET de verificación de Meta y POST de mensajes → cola pelp-inbound. */
-export async function webhook(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
-  await hydrateEnvFromSecrets({ WHATSAPP_APP_SECRET: 'appSecret', WHATSAPP_VERIFY_TOKEN: 'verifyToken', WHATSAPP_TOKEN: 'token', WHATSAPP_PHONE_ID: 'phoneNumberId' });
-  if (event.httpMethod === 'GET') {
-    const verifyToken = requiredEnv('WHATSAPP_VERIFY_TOKEN');
-    if (!verifyToken) return { statusCode: 500, body: 'webhook not configured' };
-    const params = event.queryStringParameters ?? {};
-    if (params['hub.mode'] === 'subscribe' && params['hub.verify_token'] === verifyToken && params['hub.challenge']) return { statusCode: 200, body: params['hub.challenge'] };
-    return { statusCode: 403, body: 'forbidden' };
-  }
-  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'method not allowed' };
-
-  const appSecret = requiredEnv('WHATSAPP_APP_SECRET');
+/**
+ * Entrada: la Lambda está suscrita al tema de SNS donde End User Messaging publica los eventos
+ * de la cuenta de WhatsApp. Cada mensaje del lector se hashea, se guarda su identidad para poder
+ * responderle y se encola para el motor.
+ */
+export async function inboundHandler(event: SNSEvent): Promise<void> {
+  await hydrateIdentitySecret();
   const identitySecret = requiredEnv('PELP_IDENTITY_SECRET');
   const queueUrl = requiredEnv('INBOUND_QUEUE_URL');
   const tableName = identityTableName();
-  if (!appSecret || !identitySecret || !queueUrl || !tableName) return { statusCode: 500, body: 'webhook not configured' };
+  if (!identitySecret || !queueUrl || !tableName) throw new Error('WhatsApp inbound no configurado');
 
-  const adapter = new WhatsAppAdapter({ appSecret, identitySecret });
-  if (!adapter.verify(event)) return { statusCode: 401, body: 'invalid signature' };
-  let parsed: ParsedWhatsAppMessage[];
-  try {
-    parsed = adapter.parseWithIdentities(event);
-  } catch {
-    return { statusCode: 400, body: 'bad request' };
-  }
+  const adapter = new WhatsAppAdapter({ identitySecret });
+  if (!adapter.verify(event)) throw new Error('evento que no viene de SNS');
+  const parsed = adapter.parseWithIdentities(event);
 
   sqs ??= new SQSClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
   dynamo ??= new DynamoDBClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -301,22 +336,19 @@ export async function webhook(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     await identities.put(inbound.channelUserId, phoneNumber);
     await sqs.send(new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: inboundQueueBody(inbound) }));
   }
-  return { statusCode: 200, body: 'ok' };
 }
 
 /** Entrega AnswerReady: resuelve el hash en la tabla privada; nunca acepta meta.to. */
 export async function deliverHandler(event: EventBridgeEvent<'AnswerReady', { answer: Answer; channelUserId: string; conversationId: string; meta?: Record<string, string> }>): Promise<void> {
-  await hydrateEnvFromSecrets({ WHATSAPP_APP_SECRET: 'appSecret', WHATSAPP_VERIFY_TOKEN: 'verifyToken', WHATSAPP_TOKEN: 'token', WHATSAPP_PHONE_ID: 'phoneNumberId' });
-  const accessToken = requiredEnv('WHATSAPP_TOKEN');
-  const phoneNumberId = requiredEnv('WHATSAPP_PHONE_ID');
+  const originationPhoneNumberId = requiredEnv('WHATSAPP_ORIGINATION_PHONE_NUMBER_ID');
   const tableName = identityTableName();
-  if (!accessToken || !phoneNumberId || !tableName) throw new Error('WhatsApp delivery no configurado');
+  if (!originationPhoneNumberId || !tableName) throw new Error('WhatsApp delivery no configurado');
   dynamo ??= new DynamoDBClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
   const phoneNumber = await new WhatsAppIdentityStore(tableName, dynamo, identityTtlSeconds()).resolve(event.detail.channelUserId);
   if (!phoneNumber) throw new Error('AnswerReady sin identidad vigente para whatsapp');
-  const adapter = new WhatsAppAdapter({ accessToken, phoneNumberId });
+  const adapter = new WhatsAppAdapter({ originationPhoneNumberId });
   const ctx: ChannelContext = { channel: 'whatsapp', channelUserId: phoneNumber, conversationId: event.detail.conversationId, ...(event.detail.meta ? { meta: event.detail.meta } : {}) };
   await adapter.deliver(adapter.render(event.detail.answer, ctx), ctx);
 }
 
-export const handler = webhook;
+export const handler = inboundHandler;

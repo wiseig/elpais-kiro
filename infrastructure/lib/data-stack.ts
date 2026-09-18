@@ -32,7 +32,6 @@ export class DataStack extends Stack {
   readonly identitySecret: secretsmanager.Secret;
   readonly feedSecret: secretsmanager.Secret;
   readonly dailyBriefSecret: secretsmanager.Secret;
-  readonly whatsappSecret: secretsmanager.Secret;
   readonly discordSecret: secretsmanager.Secret;
   readonly inboundQueue: sqs.Queue;
   readonly eventBus: events.EventBus;
@@ -269,7 +268,7 @@ export class DataStack extends Stack {
       password: 'PLACEHOLDER',
       clientId: '',
     });
-    this.whatsappSecret = placeholder('WhatsAppSecret', 'channels/whatsapp', 'Meta Cloud API.', { appSecret: 'PLACEHOLDER', verifyToken: 'PLACEHOLDER', token: 'PLACEHOLDER', phoneNumberId: '' });
+    // WhatsApp ya no guarda secretos de Meta: va por End User Messaging con IAM (18/9/2026).
     this.discordSecret = placeholder('DiscordSecret', 'channels/discord', 'Discord interactions.', { publicKey: 'PLACEHOLDER', applicationId: '' });
 
     /* ------------------------- Cola, bus y tópicos ------------------------- */
