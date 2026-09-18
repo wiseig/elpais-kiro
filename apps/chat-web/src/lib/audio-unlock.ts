@@ -29,7 +29,11 @@ export function voiceAudioElement(): HTMLAudioElement {
  */
 export function unlockAudio(): void {
   const audio = voiceAudioElement();
-  if (audio.paused) {
+  // Una respuesta frenada a medio camino (pausa) o cargada y quieta no se toca: cambiarle la
+  // fuente la perdía y al reanudar el modo voz volvía a escuchar en vez de seguirla (18/9/2026).
+  // El reproductor ya sonó por un gesto, así que sigue habilitado igual.
+  const frenada = audio.paused && !audio.ended && Boolean(audio.src) && audio.src !== SILENT_WAV;
+  if (audio.paused && !frenada) {
     audio.src = SILENT_WAV;
     void audio.play().catch(() => {
       // Si ni esto se puede, la reproducción posterior va a fallar y el chat cae a la voz del

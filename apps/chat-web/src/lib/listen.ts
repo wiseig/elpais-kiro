@@ -47,16 +47,37 @@ export interface ListenHandlers {
   onError?: (reason: string) => void;
 }
 
+export interface ListenOptions {
+  /**
+   * Filtro sobre cada resultado. Lo que no pasa se ignora del todo: no se muestra, no cuenta como
+   * "seguís hablando" y no rearma el reloj de silencio. Es la defensa contra el ruido de fondo: en
+   * una redacción el reconocimiento transcribe la charla de al lado, y sin esto el micrófono no se
+   * cerraba nunca y hasta la mandaba como pregunta (18/9/2026).
+   */
+  accept?: (text: string) => boolean;
+}
+
+/** Cómo controlar una escucha en curso. */
+export interface Listening {
+  /** Cortar sin mandar nada. */
+  cancel(): void;
+  /** Dar por terminado ahora y mandar lo entendido (mantener apretado para hablar). */
+  finish(): void;
+}
+
+const NOOP_LISTENING: Listening = { cancel: () => undefined, finish: () => undefined };
+
 /**
  * Empieza a escuchar y devuelve cómo parar. Se para sola cuando la persona deja de hablar; el
  * texto definitivo llega por `onFinal` una sola vez.
  */
-export function startListening(handlers: ListenHandlers): () => void {
+export function startListening(handlers: ListenHandlers, options: ListenOptions = {}): Listening {
   const Ctor = ctor();
   if (!Ctor) {
     handlers.onError?.('unsupported');
-    return () => undefined;
+    return NOOP_LISTENING;
   }
+  const accept = options.accept ?? (() => true);
   const recognition = new Ctor();
   // La variante se elige en Ajustes: cada código va a un modelo distinto y no hay forma de medir
   // desde acá cuál entiende mejor en cada teléfono.
@@ -113,14 +134,19 @@ export function startListening(handlers: ListenHandlers): () => void {
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const result = event.results[i];
       const text = result?.[0]?.transcript ?? '';
-      if (result?.isFinal) final += text;
+      // Con espacio: el navegador entrega cada final sin él y quedaba "sí¿Cómo cerró el dólar?".
+      if (result?.isFinal) final = `${final} ${text}`.trim();
       else parcial += text;
     }
     const visible = (final + parcial).trim();
-    if (visible) {
-      ultimoParcial = visible;
-      handlers.onPartial?.(visible);
+    // Ruido de fondo o relleno: como si no hubiera llegado nada.
+    if (!visible || !accept(visible)) {
+      if (!visible) return;
+      if (final && !accept(final)) final = '';
+      return;
     }
+    ultimoParcial = visible;
+    handlers.onPartial?.(visible);
     // Ya se escuchó algo: a partir de acá alcanza con una pausa corta para dar por terminado.
     rearmar(SILENCE_MS);
   };
@@ -156,15 +182,27 @@ export function startListening(handlers: ListenHandlers): () => void {
     handlers.onError?.('start_failed');
   }
 
-  return () => {
-    clearTimeout(tope);
-    limpiar();
-    cerrado = true;
-    try {
-      recognition.abort();
-    } catch {
-      // Cortar a mano no puede fallar hacia afuera.
-    }
-    handlers.onEnd?.();
+  return {
+    cancel: () => {
+      clearTimeout(tope);
+      limpiar();
+      cerrado = true;
+      try {
+        recognition.abort();
+      } catch {
+        // Cortar a mano no puede fallar hacia afuera.
+      }
+      handlers.onEnd?.();
+    },
+    finish: () => {
+      // Soltar el botón: se entrega lo que hay sin esperar el silencio.
+      clearTimeout(tope);
+      limpiar();
+      try {
+        recognition.stop();
+      } catch {
+        cerrar();
+      }
+    },
   };
 }

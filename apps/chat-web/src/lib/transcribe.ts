@@ -1,6 +1,6 @@
 import { EventStreamCodec } from '@smithy/eventstream-codec';
 import type { ApiClient } from './api';
-import type { ListenHandlers } from './listen';
+import type { ListenHandlers, ListenOptions, Listening } from './listen';
 
 /**
  * Dictado contra Amazon Transcribe en streaming. El motor firma la URL; el navegador captura el
@@ -56,7 +56,8 @@ interface TranscriptMessage {
   Message?: string;
 }
 
-export function startTranscribe(api: ApiClient, handlers: ListenHandlers): () => void {
+export function startTranscribe(api: ApiClient, handlers: ListenHandlers, options: ListenOptions = {}): Listening {
+  const accept = options.accept ?? (() => true);
   let cerrado = false;
   let ws: WebSocket | null = null;
   let stream: MediaStream | null = null;
@@ -174,10 +175,13 @@ export function startTranscribe(api: ApiClient, handlers: ListenHandlers): () =>
           else parcial = texto;
         }
         const visible = `${final} ${parcial}`.trim();
-        if (visible) {
-          ultimoParcial = visible;
-          handlers.onPartial?.(visible);
+        // Ruido de fondo o relleno: como si no hubiera llegado nada.
+        if (!visible || !accept(visible)) {
+          if (final && !accept(final)) final = '';
+          return;
         }
+        ultimoParcial = visible;
+        handlers.onPartial?.(visible);
         rearmar(SILENCE_MS);
       };
 
@@ -190,18 +194,22 @@ export function startTranscribe(api: ApiClient, handlers: ListenHandlers): () =>
     }
   })();
 
-  return () => {
-    // Cortar a mano no manda la pregunta.
-    if (cerrado) return;
-    cerrado = true;
-    limpiar();
-    clearTimeout(tope);
-    soltarAudio();
-    try {
-      ws?.close();
-    } catch {
-      // idem
-    }
-    handlers.onEnd?.();
+  return {
+    cancel: () => {
+      // Cortar a mano no manda la pregunta.
+      if (cerrado) return;
+      cerrado = true;
+      limpiar();
+      clearTimeout(tope);
+      soltarAudio();
+      try {
+        ws?.close();
+      } catch {
+        // idem
+      }
+      handlers.onEnd?.();
+    },
+    // Soltar el botón: se entrega lo que hay sin esperar el silencio.
+    finish: () => cerrar(true),
   };
 }

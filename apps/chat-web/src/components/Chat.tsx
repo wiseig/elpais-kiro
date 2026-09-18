@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Answer, NoticeCode } from '@pelp/domain';
 import type { ConsentTextResponse, MeResponse, SuggestionCard } from '@pelp/domain/api';
@@ -18,10 +18,13 @@ import {
 } from '../lib/history';
 import { unlockAudio, voiceAudioElement } from '../lib/audio-unlock';
 import { primeHum, startHum, stopHum } from '../lib/hum';
-import { startListening } from '../lib/listen';
+import { startListening, type Listening } from '../lib/listen';
+import { startVoiceEnergy, type VoiceEnergy } from '../lib/voice-energy';
+import { esPreguntaConSustancia } from '../lib/voice-filter';
+import { getVoicePaused, setVoicePaused, subscribeVoicePaused } from '../lib/voice-pause';
 import { getSttProvider } from '../lib/stt-provider';
 import { startTranscribe } from '../lib/transcribe';
-import { speak, speechSupported, stopSpeaking } from '../lib/speech';
+import { pauseSpeaking, resumeSpeaking, speak, speechSupported, stopSpeaking } from '../lib/speech';
 import { getVoicePreference } from '../lib/voice';
 import { getToken } from '../lib/session';
 import { Composer } from './Composer';
@@ -98,6 +101,24 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
    */
   const [voiceMode, setVoiceMode] = useState(false);
   const voiceModeRef = useRef(false);
+  /**
+   * En pausa el micrófono no se abre solo después de cada respuesta: se habla con el botón. Es
+   * la salida para un lugar ruidoso, y se recuerda entre visitas.
+   */
+  const voicePaused = useSyncExternalStore(subscribeVoicePaused, getVoicePaused, getVoicePaused);
+  /**
+   * Se apretó pausa con una respuesta en camino o sonando: se frena donde está y se guarda para
+   * seguirla al reanudar. Es de este turno, no una preferencia.
+   */
+  const frenadoRef = useRef(false);
+  const pendienteRef = useRef<Answer | null>(null);
+  /** El micrófono está abierto en este instante. */
+  const [listeningNow, setListeningNow] = useState(false);
+  /**
+   * El reconocimiento falló (sin permiso, sin red, sin conexión): el orbe lo dice y el modo se
+   * queda esperando el botón en vez de cerrarse sin explicación, que era lo que pasaba antes.
+   */
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   /** Lo que se va entendiendo mientras hablás, para verlo en el orbe. */
   const [transcript, setTranscript] = useState('');
   const [speaking, setSpeaking] = useState(false);
@@ -107,14 +128,18 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
   // `send` es asíncrono y lee el estado de cuando arrancó: las refs dicen qué pasa ahora.
   const preparingRef = useRef(false);
   const voiceRef = useRef(false);
-  const stopListenRef = useRef<(() => void) | null>(null);
+  const stopListenRef = useRef<Listening | null>(null);
+  /** Mide cuándo hay voz cerca mientras dura el modo voz: es el filtro contra el ruido de fondo. */
+  const energyRef = useRef<VoiceEnergy | null>(null);
   /**
    * Número del turno hablado en curso. Interrumpir lo avanza, así que la respuesta del turno
    * anterior, si todavía venía en camino, llega al hilo pero ya no se lee ni corta lo nuevo.
    */
   const turnoRef = useRef(0);
 
-  function salirDeVoz() {
+  function salirDeVoz(motivo = 'cortar') {
+    // Queda en la consola: cuando alguien reporta "se cerró solo", esto dice quién lo cerró.
+    if (voiceModeRef.current) console.debug('[voz] salir:', motivo);
     voiceModeRef.current = false;
     voiceRef.current = false;
     preparingRef.current = false;
@@ -122,8 +147,14 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
     stopSpeaking();
     answerAudioRef.current?.pause();
     answerAudioRef.current = null;
-    stopListenRef.current?.();
+    stopListenRef.current?.cancel();
     stopListenRef.current = null;
+    energyRef.current?.stop();
+    energyRef.current = null;
+    frenadoRef.current = false;
+    pendienteRef.current = null;
+    setListeningNow(false);
+    setVoiceError(null);
     setPreparing(false);
     setSpeaking(false);
     setTranscript('');
@@ -132,52 +163,177 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
 
   /** Abre el micrófono para la próxima pregunta del modo voz. */
   function escuchar() {
-    if (!voiceModeRef.current) return;
+    if (!voiceModeRef.current || stopListenRef.current) return;
     let dijoAlgo = false;
     setTranscript('');
+    setVoiceError(null);
+    // Se mide solo mientras el micrófono está abierto: con él cerrado no queda nada capturando,
+    // y el indicador del navegador se apaga, que es la prueba de que dejó de escuchar.
+    energyRef.current ??= startVoiceEnergy();
     // Mismo contrato para los dos motores: el chat no sabe cuál está escuchando.
-    const abrir = getSttProvider() === 'transcribe' ? (h: Parameters<typeof startListening>[0]) => startTranscribe(api, h) : startListening;
-    stopListenRef.current = abrir({
-      onPartial: (texto) => setTranscript(texto),
-      onFinal: (texto) => {
-        dijoAlgo = true;
-        voiceRef.current = true;
-        turnoRef.current += 1;
-        setTranscript(texto);
-        void send(texto.slice(0, MAX_QUESTION_LENGTH), undefined, turnoRef.current);
+    const abrir = getSttProvider() === 'transcribe'
+      ? (h: Parameters<typeof startListening>[0], o: Parameters<typeof startListening>[1]) => startTranscribe(api, h, o)
+      : startListening;
+    // Solo cuenta lo que tiene sustancia y sonó cerca del micrófono. El resto es la charla de
+    // fondo: no se muestra, no rearma el silencio y no sale como pregunta.
+    // Sin puerta trasera para lo corto: dejar pasar todo lo de menos de 12 caracteres metía "eh",
+    // "sí" y "bla bla" como si fueran el arranque de una pregunta (medido el 18/9/2026). El costo es
+    // que el texto en gris aparece un instante después, cuando ya hay algo con sustancia.
+    const accept = (texto: string) => (energyRef.current?.recentlyLoud(2500) ?? true) && esPreguntaConSustancia(texto);
+    stopListenRef.current = abrir(
+      {
+        onPartial: (texto) => setTranscript(texto),
+        onFinal: (texto) => {
+          if (!esPreguntaConSustancia(texto)) return;
+          dijoAlgo = true;
+          voiceRef.current = true;
+          turnoRef.current += 1;
+          setTranscript(texto);
+          void send(texto.slice(0, MAX_QUESTION_LENGTH), undefined, turnoRef.current);
+        },
+        onEnd: () => {
+          stopListenRef.current = null;
+          setListeningNow(false);
+          energyRef.current?.stop();
+          energyRef.current = null;
+          // Silencio o solo ruido: el micrófono queda cerrado y el modo espera el botón. Antes se
+          // salía del modo, y antes de eso el micrófono seguía abierto escuchando el entorno.
+          if (!dijoAlgo) console.debug('[voz] micrófono cerrado sin pregunta');
+        },
+        onError: (motivo) => {
+          stopListenRef.current = null;
+          setListeningNow(false);
+          energyRef.current?.stop();
+          energyRef.current = null;
+          console.debug('[voz] no se pudo escuchar:', motivo);
+          setVoiceError(motivo);
+        },
       },
-      onEnd: () => {
-        stopListenRef.current = null;
-        // Silencio: se sale solo en vez de dejar el micrófono abierto para siempre.
-        if (!dijoAlgo && voiceModeRef.current && !voiceRef.current) salirDeVoz();
-      },
-      onError: () => {
-        stopListenRef.current = null;
-        salirDeVoz();
-      },
-    });
+      { accept },
+    );
+    setListeningNow(true);
   }
 
   /**
-   * Cortar la respuesta a mitad de camino para preguntar otra cosa: se calla y vuelve a escuchar
-   * sin salir del modo. Solo mientras responde o prepara la voz, cuando la respuesta ya llegó; en
-   * pleno "pensando" la pregunta anterior sigue en vuelo y una nueva se pisaría con ella.
+   * Vuelve a abrir el micrófono con un respiro: sin él el reconocimiento se come la cola de la
+   * propia respuesta y la manda como pregunta nueva. El orbe ya dice "te escucho" en el medio, que
+   * si no el texto parpadeaba a "tocá el micrófono" por cuatro décimas.
    */
-  function interrumpir() {
-    if (!voiceModeRef.current) return;
-    // Es un toque: sirve para volver a habilitar el audio en el teléfono.
-    unlockAudio();
-    primeHum();
+  function reabrir() {
+    if (!voiceModeRef.current || getVoicePaused()) return;
+    setListeningNow(true);
+    window.setTimeout(() => {
+      if (!voiceModeRef.current || getVoicePaused()) {
+        setListeningNow(false);
+        return;
+      }
+      escuchar();
+    }, 400);
+  }
+
+  /** Corta lo que esté sonando (respuesta o "mmm") y da por cerrado ese turno hablado. */
+  function callar() {
     turnoRef.current += 1;
     stopHum();
     stopSpeaking();
     answerAudioRef.current?.pause();
     answerAudioRef.current = null;
+    pendienteRef.current = null;
+    frenadoRef.current = false;
     preparingRef.current = false;
     setPreparing(false);
     setSpeaking(false);
     voiceRef.current = false;
+  }
+
+  /**
+   * El botón del micrófono (y el orbe mientras responde). Un toque abre el micrófono; otro toque
+   * manda lo que hay sin esperar el silencio; mantenerlo apretado habla mientras dura el apretón
+   * y soltar manda. Si estaba respondiendo, la corta y escucha. Devuelve si abrió el micrófono,
+   * que es lo que decide si soltar tiene que mandar.
+   */
+  function hablar(): boolean {
+    if (!voiceModeRef.current) return false;
+    // Es un toque: sirve para volver a habilitar el audio en el teléfono.
+    unlockAudio();
+    primeHum();
+    if (stopListenRef.current) {
+      stopListenRef.current.finish();
+      return false;
+    }
+    // Con la pregunta en vuelo no se abre: una nueva se pisaría con la respuesta que viene.
+    if (loading) return false;
+    callar();
     escuchar();
+    return true;
+  }
+  function mandar() {
+    stopListenRef.current?.finish();
+  }
+
+  /**
+   * Pausa: el micrófono se cierra sin mandar nada, la respuesta se frena donde está y el modo no
+   * vuelve a escuchar solo hasta reanudar. Preguntar con el botón sigue funcionando en pausa.
+   */
+  function pausar() {
+    setVoicePaused(true);
+    stopListenRef.current?.cancel();
+    stopListenRef.current = null;
+    setListeningNow(false);
+    energyRef.current?.stop();
+    energyRef.current = null;
+    const audio = answerAudioRef.current;
+    const sonando = Boolean(audio && !audio.paused && !audio.ended) || pauseSpeaking();
+    audio?.pause();
+    // Con algo sonando o en camino se marca frenado: reanudar lo sigue en vez de escuchar.
+    if (sonando || preparingRef.current || voiceRef.current) frenadoRef.current = true;
+    stopHum();
+    setPreparing(false);
+    setSpeaking(false);
+  }
+
+  /** Reanudar: sigue lo que estaba frenado, o vuelve a escuchar si no había nada. */
+  function reanudar() {
+    setVoicePaused(false);
+    unlockAudio();
+    primeHum();
+    const estabaFrenado = frenadoRef.current;
+    frenadoRef.current = false;
+    if (!voiceModeRef.current) return;
+    const pendiente = pendienteRef.current;
+    if (pendiente) {
+      // La respuesta llegó mientras estaba en pausa: se lee ahora.
+      pendienteRef.current = null;
+      voiceRef.current = true;
+      hablarRespuesta(pendiente);
+      return;
+    }
+    const audio = answerAudioRef.current;
+    if (audio && audio.paused && !audio.ended && audio.src) {
+      void audio.play().then(
+        () => setSpeaking(true),
+        () => {
+          // No se pudo seguir: se da por terminada y se vuelve a escuchar.
+          answerAudioRef.current = null;
+          voiceRef.current = false;
+          escuchar();
+        },
+      );
+      return;
+    }
+    if (resumeSpeaking()) {
+      setSpeaking(true);
+      return;
+    }
+    if (estabaFrenado && (preparingRef.current || loading)) {
+      // La voz todavía se está preparando o la pregunta sigue en vuelo: al llegar, se lee sola.
+      if (preparingRef.current) {
+        setPreparing(true);
+        startHum();
+      }
+      return;
+    }
+    if (!loading && !voiceRef.current) escuchar();
   }
 
   function alternarVoz() {
@@ -191,7 +347,8 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
     primeHum();
     voiceModeRef.current = true;
     setVoiceMode(true);
-    escuchar();
+    // En pausa el micrófono se abre con el botón, no solo.
+    if (!getVoicePaused()) escuchar();
   }
 
   /**
@@ -201,6 +358,13 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
   function hablarRespuesta(answer: Answer) {
     const turno = turnoRef.current;
     const vigente = () => turno === turnoRef.current;
+    if (frenadoRef.current) {
+      // Se apretó pausa mientras pensaba: la respuesta espera a reanudar.
+      stopHum();
+      pendienteRef.current = answer;
+      voiceRef.current = false;
+      return;
+    }
     const bloque = answer.blocks.find((block) => block.type === 'text');
     const contenido = bloque && 'text' in bloque ? bloque.text : '';
     const terminar = () => {
@@ -211,9 +375,8 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
       setPreparing(false);
       voiceRef.current = false;
       answerAudioRef.current = null;
-      // Un respiro antes de volver a abrir el micrófono: sin esto el reconocimiento se come la
-      // cola de la propia respuesta y la manda como si fuera una pregunta nueva.
-      if (voiceModeRef.current) window.setTimeout(escuchar, 400);
+      // En pausa se espera el botón.
+      reabrir();
     };
     if (!contenido.trim()) {
       stopHum();
@@ -248,6 +411,13 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         audio.onended = terminar;
         audio.onerror = terminar;
         audio.src = url;
+        if (frenadoRef.current) {
+          // Se apretó pausa mientras se preparaba: queda cargado y quieto hasta reanudar.
+          stopHum();
+          preparingRef.current = false;
+          setPreparing(false);
+          return;
+        }
         await audio.play();
         stopHum();
         preparingRef.current = false;
@@ -422,7 +592,7 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
         if (voiceRef.current && !preparingRef.current && !window.speechSynthesis?.speaking) {
           stopHum();
           voiceRef.current = false;
-          if (voiceModeRef.current) window.setTimeout(escuchar, 400);
+          reabrir();
         }
       }
     },
@@ -591,10 +761,14 @@ export function Chat({ api, me, consent, suggestionCards, suggestionItems, onMeC
 
       {voiceMode ? (
         <VoiceOrb
-          state={speaking ? 'speaking' : preparing ? 'connecting' : loading ? 'thinking' : 'listening'}
+          state={voiceError ? 'error' : speaking ? 'speaking' : preparing ? 'connecting' : loading ? 'thinking' : listeningNow ? 'listening' : 'idle'}
+          error={voiceError}
           transcript={transcript}
-          onCancel={salirDeVoz}
-          onInterrupt={interrumpir}
+          paused={voicePaused}
+          onTogglePause={() => (getVoicePaused() ? reanudar() : pausar())}
+          onTalkStart={hablar}
+          onTalkEnd={mandar}
+          onClose={() => salirDeVoz()}
         />
       ) : null}
 

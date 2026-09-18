@@ -51,7 +51,7 @@ const teardown = () => {
   );
 };
 
-const acquire = (): Promise<AnalyserNode> => {
+export const acquireSharedAnalyser = (): Promise<AnalyserNode> => {
   consumers += 1;
   engine ??= createShared();
   const current = engine;
@@ -64,7 +64,7 @@ const acquire = (): Promise<AnalyserNode> => {
   );
 };
 
-const release = () => {
+export const releaseSharedAnalyser = () => {
   consumers = Math.max(0, consumers - 1);
   if (consumers === 0) teardown();
 };
@@ -99,7 +99,7 @@ export const useAudioLevel = (active: boolean, smoothing = 0.15): AudioLevel => 
     let cancelled = false;
     let raf = 0;
 
-    void acquire().then(
+    void acquireSharedAnalyser().then(
       (analyser) => {
         if (cancelled) return;
         setError(null);
@@ -140,7 +140,7 @@ export const useAudioLevel = (active: boolean, smoothing = 0.15): AudioLevel => 
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
-      release();
+      releaseSharedAnalyser();
       levelRef.current = -1;
     };
   }, [active, smoothing]);

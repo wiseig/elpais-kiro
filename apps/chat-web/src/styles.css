@@ -1626,7 +1626,7 @@ textarea, input { font: inherit; }
 }
 .voice-orb-button { padding: 0; background: none; border: 0; cursor: pointer; border-radius: 50%; }
 .voice-orb-button:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 6px; }
-.voice-hint { margin: -8px 0 0; font-family: var(--font); font-size: 0.8rem; color: var(--text-secondary); text-align: center; }
+.voice-hint { margin: -8px 0 0; max-width: 34ch; font-family: var(--font); font-size: 0.8rem; color: var(--text-secondary); text-align: center; }
 
 .voice-transcript {
   margin: 0;
@@ -1639,18 +1639,40 @@ textarea, input { font: inherit; }
   overflow-wrap: anywhere;
 }
 
-.voice-cancel {
-  padding: 8px 20px;
-  font: inherit;
-  font-family: var(--font);
-  font-size: 0.84rem;
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 999px;
+/* Los tres controles: pausa, micrófono y cerrar. Círculos con borde fino, como los del
+   reproductor; el micrófono es más grande porque es el que se usa. */
+.voice-controls { display: flex; align-items: center; gap: 26px; margin-top: 8px; }
+.voice-ctl {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 58px; height: 58px; padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
   cursor: pointer;
+  transition: border-color var(--transition), background-color var(--transition), transform 120ms ease-out;
 }
-.voice-cancel:hover { color: var(--text); border-color: var(--text-secondary); }
+.voice-ctl:hover { border-color: var(--text-secondary); }
+.voice-ctl:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.voice-ctl[aria-pressed="true"]:not(.voice-ctl--talk) { background: var(--muted-bg); }
+.voice-ctl--talk {
+  width: 76px; height: 76px;
+  touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.voice-ctl--talk[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+.voice-ctl--talk-on {
+  color: #fff; background: #d33; border-color: #d33;
+  transform: scale(1.06);
+  box-shadow: 0 0 0 0 rgba(221, 51, 51, 0.45);
+  animation: voice-talk-pulse 1.4s ease-out infinite;
+}
+@keyframes voice-talk-pulse {
+  70% { box-shadow: 0 0 0 16px rgba(221, 51, 51, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(221, 51, 51, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-ctl--talk-on { animation: none; transform: none; }
+}
 
 /* ---- Modo voz: micrófono en la barra ---- */
 .mic-btn {

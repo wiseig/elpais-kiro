@@ -111,12 +111,57 @@ describe('startListening', () => {
   it('cortar a mano no manda la pregunta', () => {
     const onFinal = vi.fn();
     const onEnd = vi.fn();
-    const cancelar = startListening({ onFinal, onEnd });
+    const escucha = startListening({ onFinal, onEnd });
     FakeRecognition.last!.emit('algo', true);
-    cancelar();
+    escucha.cancel();
     vi.advanceTimersByTime(5000);
     expect(FakeRecognition.last!.aborted).toBe(true);
     expect(onFinal).not.toHaveBeenCalled();
     expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignora lo que no pasa el filtro: no rearma el silencio ni se manda', () => {
+    const onFinal = vi.fn();
+    const onPartial = vi.fn();
+    // Solo pasa lo que empieza con "¿": el resto es la charla de al lado.
+    startListening({ onFinal, onPartial }, { accept: (text) => text.startsWith('¿') });
+    const recognition = FakeRecognition.last!;
+    for (let i = 0; i < 5; i += 1) {
+      recognition.emit('bla bla de fondo ', false);
+      vi.advanceTimersByTime(1000);
+    }
+    // 5 s de ruido: el reloj de "no se escucha nada" no se movió y cierra a los 7 s sin mandar.
+    expect(onPartial).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(2100);
+    expect(recognition.stopped).toBe(true);
+    expect(onFinal).not.toHaveBeenCalled();
+  });
+
+  it('un final que no pasa el filtro se descarta aunque el navegador lo marque definitivo', () => {
+    const onFinal = vi.fn();
+    startListening({ onFinal }, { accept: (text) => text.includes('dólar') });
+    const recognition = FakeRecognition.last!;
+    recognition.emit('ruido de fondo', true);
+    vi.advanceTimersByTime(7100);
+    expect(onFinal).not.toHaveBeenCalled();
+  });
+
+  it('finish() entrega lo que hay sin esperar el silencio (mantener apretado)', () => {
+    const onFinal = vi.fn();
+    const escucha = startListening({ onFinal });
+    FakeRecognition.last!.emit('¿Cómo cerró el dólar?', false);
+    vi.advanceTimersByTime(200);
+    escucha.finish();
+    expect(onFinal).toHaveBeenCalledWith('¿Cómo cerró el dólar?');
+  });
+
+  it('une los finales con espacio: el navegador los entrega pegados', () => {
+    const onFinal = vi.fn();
+    startListening({ onFinal });
+    const recognition = FakeRecognition.last!;
+    recognition.emit('¿Cómo cerró', true);
+    recognition.emit('el dólar?', true);
+    vi.advanceTimersByTime(1700);
+    expect(onFinal).toHaveBeenCalledWith('¿Cómo cerró el dólar?');
   });
 });

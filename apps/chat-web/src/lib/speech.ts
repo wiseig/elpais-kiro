@@ -65,3 +65,17 @@ export function speak(text: string, handlers: { onEnd?: () => void; onError?: ()
     window.speechSynthesis.speak(utterance);
   });
 }
+
+/** Frena la lectura donde está, para seguirla después con `resumeSpeaking`. */
+export function pauseSpeaking(): boolean {
+  if (!speechSupported() || !window.speechSynthesis.speaking) return false;
+  window.speechSynthesis.pause();
+  return true;
+}
+
+/** Sigue una lectura frenada. Devuelve si había algo que seguir. */
+export function resumeSpeaking(): boolean {
+  if (!speechSupported() || !window.speechSynthesis.paused) return false;
+  window.speechSynthesis.resume();
+  return true;
+}
